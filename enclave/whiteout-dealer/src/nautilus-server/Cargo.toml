@@ -2,6 +2,7 @@
 name = "nautilus-server"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "Whiteout dealer: deals one sealed map per request inside an AWS Nitro enclave"
 

@@ -10,12 +10,11 @@
  *
  * Run: LOCALNET=1 BYTECODE=build.json pnpm --filter @whiteout/e2e localnet
  */
-import { readFileSync } from 'node:fs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction } from '@mysten/sui/transactions';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
+import { created, exec as execOn, faucet, localClient, pathToRelic, publish } from './harness.js';
 import {
   ExplorerStatus,
   GRID,
@@ -29,82 +28,16 @@ import {
   getExplorer,
   getGame,
   listGameEvents,
-  parseAbort,
   seededRng,
   signTiles,
   tileIndex,
   tx,
-  type DirectionValue,
-  type MapKinds,
 } from '@whiteout/core';
 
-const RPC = process.env.LOCALNET_RPC ?? 'http://127.0.0.1:9000';
-const FAUCET = process.env.LOCALNET_FAUCET ?? 'http://127.0.0.1:9123';
 const run = process.env.LOCALNET ? describe : describe.skip;
-const client = new SuiGrpcClient({ network: 'localnet', baseUrl: RPC });
-
-async function fund(address: string) {
-  for (const path of ['/v2/gas', '/gas']) {
-    const r = await fetch(`${FAUCET}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ FixedAmountRequest: { recipient: address } }),
-    });
-    if (r.ok) return;
-  }
-  throw new Error('faucet failed');
-}
-
-async function exec(signer: Ed25519Keypair, t: Transaction) {
-  t.setSenderIfNotSet(signer.toSuiAddress());
-  const res = await client.core.signAndExecuteTransaction({
-    transaction: t,
-    signer,
-    include: { effects: true, objectTypes: true },
-  });
-  const r = res.Transaction ?? res.FailedTransaction!;
-  if (!r.status.success) {
-    const info = parseAbort(r.status.error);
-    throw new Error(info ? `${info.name}: ${info.message}` : r.status.error.message);
-  }
-  await client.core.waitForTransaction({ digest: r.digest });
-  return r;
-}
-
-const created = (r: Awaited<ReturnType<typeof exec>>, suffix: string) =>
-  r.effects!.changedObjects.find((c) => c.idOperation === 'Created' && r.objectTypes![c.objectId]?.includes(suffix))!.objectId;
-
-/** Shortest crevasse-free path from row 0 to the relic, as directions. */
-function pathToRelic(map: MapKinds): { column: number; dirs: DirectionValue[] } {
-  const [rx, ry] = findRelic(map);
-  const prev = new Map<number, [number, DirectionValue]>();
-  const queue = Array.from({ length: GRID }, (_, x) => tileIndex(x, 0));
-  const seen = new Set(queue);
-  while (queue.length) {
-    const i = queue.shift()!;
-    if (i === tileIndex(rx, ry)) break;
-    const x = i % GRID;
-    const y = Math.floor(i / GRID);
-    for (const [dx, dy, d] of [[0, 1, 0], [1, 0, 1], [0, -1, 2], [-1, 0, 3]] as const) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= GRID || ny >= GRID) continue;
-      const j = tileIndex(nx, ny);
-      if (seen.has(j) || map[j] === TileKind.CREVASSE) continue;
-      seen.add(j);
-      prev.set(j, [i, d]);
-      queue.push(j);
-    }
-  }
-  const dirs: DirectionValue[] = [];
-  let cur = tileIndex(rx, ry);
-  while (prev.has(cur)) {
-    const [p, d] = prev.get(cur)!;
-    dirs.unshift(d);
-    cur = p;
-  }
-  return { column: cur % GRID, dirs };
-}
+const client = localClient();
+const fund = faucet;
+const exec = (signer: Ed25519Keypair, t: Transaction) => execOn(client, signer, t);
 
 run('Whiteout on localnet', () => {
   it('plays a ceremony hunt end to end', { timeout: 900_000 }, async () => {
@@ -115,15 +48,7 @@ run('Whiteout on localnet', () => {
     await new Promise((r) => setTimeout(r, 3000));
 
     // --- Publish -----------------------------------------------------------------
-    const build = JSON.parse(readFileSync(process.env.BYTECODE ?? 'build.json', 'utf8')) as {
-      modules: string[];
-      dependencies: string[];
-    };
-    const pub = new Transaction();
-    const [upgradeCap] = pub.publish({ modules: build.modules, dependencies: build.dependencies });
-    pub.transferObjects([upgradeCap!], host.toSuiAddress());
-    const published = await exec(host, pub);
-    const packageId = published.effects!.changedObjects.find((c) => c.outputState === 'PackageWrite')!.objectId;
+    const packageId = await publish(client, host, process.env.BYTECODE ?? 'build.json');
     const ctx = { packageId, coinType: '0x2::sui::SUI' };
 
     // --- Lobby + prize -------------------------------------------------------------

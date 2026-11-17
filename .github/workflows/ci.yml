@@ -114,6 +114,15 @@ jobs:
       - name: Play a hunt
         working-directory: e2e
         run: LOCALNET=1 BYTECODE=build.json pnpm exec vitest run localnet.test.ts
+      - name: Load bots (8 bots, 90 s; NFR1 latency, no shared-object contention)
+        working-directory: e2e
+        run: BYTECODE=build.json pnpm exec tsx load.ts --bots 8 --seconds 90 --out load-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-report
+          path: e2e/load-report.json
+          if-no-files-found: ignore
       - name: Localnet log on failure
         if: failure()
         run: tail -100 localnet.log

@@ -6,3 +6,5 @@ target/
 .env.*
 .whiteout/
 *.tsbuildinfo
+load-report.json
+e2e/build.json

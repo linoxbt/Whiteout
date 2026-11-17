@@ -102,9 +102,15 @@ jobs:
           sui client --yes envs
       - name: Compile to bytecode
         run: |
-          sui move build --path move/whiteout --dump-bytecode-as-base64 --with-unpublished-dependencies > e2e/build.json 2> build.err || {
-            cat build.err; exit 1; }
-          head -c 200 e2e/build.json; echo
+          set +e
+          for flags in "--with-unpublished-dependencies" "--with-unpublished-dependencies -e localnet" ""; do
+            echo "== sui move build --dump-bytecode-as-base64 $flags"
+            sui move build --path move/whiteout --dump-bytecode-as-base64 $flags > e2e/build.json 2> build.err
+            code=$?
+            if [ $code -eq 0 ] && head -c 1 e2e/build.json | grep -q '{'; then echo "ok"; head -c 200 e2e/build.json; echo; exit 0; fi
+            echo "exit $code"; head -c 2000 e2e/build.json; echo; tail -40 build.err
+          done
+          exit 1
       - name: Play a hunt
         working-directory: e2e
         run: LOCALNET=1 BYTECODE=build.json pnpm exec vitest run localnet.test.ts

@@ -77,7 +77,7 @@ whiteout reclaim --game <game>         # likewise
 whiteout thaw --game <game>
 ```
 
-`deal` saves the checked deal to `.whiteout/<game>/deal.json` (ciphertext only, safe to keep) and uploads the Quilt; the hunt stays in LOBBY until `open`. Mainnet has no public Walrus publisher: pass `--publisher` pointing at your own publisher or an upload relay.
+`deal` saves the checked deal to `.whiteout/<game>/deal.json` (ciphertext only, safe to keep) and uploads the Quilt; the hunt stays in LOBBY until `open`. Mainnet has no public Walrus publisher, so `deal` and `thaw` upload with the Walrus SDK through the upload relay, and the host wallet needs WAL for storage. Pass `--publisher` to use your own publisher instead, or `--sdk` to use the SDK on testnet.
 
 ### Live-hunt checklist (spec section 21)
 

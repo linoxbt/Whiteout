@@ -32,6 +32,7 @@ import {
   type Tile,
 } from '@whiteout/core';
 import { registerAdmin } from './admin.js';
+import { storeBlobSdk, storeQuiltSdk } from './walrus-sdk.js';
 import { alert, alertsFor, sponsorSample, type WatchSample } from './alerts.js';
 import { ceremonyDeal, checkDealFile, requestEnclaveDeal, tilesOf, type DealFile } from './dealer.js';
 import {
@@ -127,6 +128,7 @@ program
   .option('--ceremony', 'deal locally: host-dealt, zero-stake hunts only (MD5)')
   .option('--publisher <url>', 'Walrus publisher (default: network config)')
   .option('--epochs <n>', 'Walrus storage epochs (default: duration + 30 days)')
+  .option('--sdk', 'upload with the Walrus SDK and upload relay (default on Mainnet)')
   .action(async (o) => {
     const e = env();
     const rec = loadRecord(e, o.game);
@@ -154,11 +156,10 @@ program
     writeJson(dealFile, d);
     console.log(`Deal checked: 576 tiles, ct_hash ${d.ctHash.slice(0, 16)}..., saved to ${dealFile}`);
 
-    const publisher = o.publisher ?? e.cfg.walrusPublisher;
-    if (!publisher) throw new Error('No Walrus publisher for this network: pass --publisher (Mainnet: your own publisher or relay).');
+    const publisher = o.sdk ? undefined : (o.publisher ?? e.cfg.walrusPublisher);
     const epochs = o.epochs ? Number(o.epochs) : epochsFor(e, game.durationMs);
-    console.log(`Uploading the Quilt (${epochs} epochs) ...`);
-    const { quiltId } = await storeQuilt(publisher, tilesOf(d), epochs);
+    console.log(`Uploading the Quilt (${epochs} epochs) ${publisher ? `via ${publisher}` : 'with the Walrus SDK (host pays WAL)'} ...`);
+    const { quiltId } = publisher ? await storeQuilt(publisher, tilesOf(d), epochs) : await storeQuiltSdk(e, tilesOf(d), epochs);
     saveRecord(e, { ...rec, quiltId, dealFile });
     console.log(`Quilt: ${quiltId}`);
     next(`whiteout open --game ${o.game}   (at T-0: this starts the clock)`);
@@ -294,6 +295,7 @@ program
   .requiredOption('--game <id>')
   .option('--publisher <url>', 'Walrus publisher (default: network config)')
   .option('--out <file>', 'also write the thaw file here')
+  .option('--sdk', 'upload with the Walrus SDK and upload relay (default on Mainnet)')
   .action(async (o) => {
     const e = env();
     const rec = loadRecord(e, o.game);
@@ -323,9 +325,9 @@ program
     const check = verifyThaw(file, o.game, game.dealerPk, game.dealTs);
     if (!check.ok) throw new Error(`thaw check failed: ${check.problems.join('; ')}`);
     if (o.out) writeJson(o.out, file);
-    const publisher = o.publisher ?? e.cfg.walrusPublisher;
-    if (!publisher) throw new Error('No Walrus publisher for this network: pass --publisher.');
-    const blobId = await storeBlob(publisher, new TextEncoder().encode(JSON.stringify(file)), epochsFor(e, 0));
+    const publisher = o.sdk ? undefined : (o.publisher ?? e.cfg.walrusPublisher);
+    const bytes = new TextEncoder().encode(JSON.stringify(file));
+    const blobId = publisher ? await storeBlob(publisher, bytes, epochsFor(e, 0)) : await storeBlobSdk(e, bytes, epochsFor(e, 0));
     const r = await exec(e, tx.publishThaw(ctx, { gameId: o.game, capId: rec.capId, blobId }));
     saveRecord(e, { ...rec, thawBlob: blobId });
     console.log(`Thaw file ${blobId} verified (relic at ${check.relic}). Digest: ${r.digest}`);

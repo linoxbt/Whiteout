@@ -123,3 +123,20 @@ export function pathToRelic(map: MapKinds): { column: number; dirs: DirectionVal
 }
 
 export { tx };
+
+/**
+ * Executes a transaction that includes a step, retrying while the chain says the 8 s
+ * cooldown has not passed. The cooldown is measured on the chain's Clock, which can
+ * run ahead of this machine's clock, so a wait computed locally can be a little short.
+ */
+export async function execStep(client: Client, signer: Ed25519Keypair, build: () => Transaction, tries = 10) {
+  for (let i = 0; ; i++) {
+    try {
+      return await exec(client, signer, build());
+    } catch (e) {
+      const cooldown = (e as ExecError).code === 10 || /abort code: 10\b.*::game::step/.test((e as Error).message);
+      if (!cooldown || i >= tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}

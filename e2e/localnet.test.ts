@@ -14,7 +14,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
-import { created, exec as execOn, faucet, localClient, pathToRelic, publish } from './harness.js';
+import { created, exec as execOn, execStep, faucet, localClient, pathToRelic, publish } from './harness.js';
 import {
   ExplorerStatus,
   GRID,
@@ -106,15 +106,18 @@ run('Whiteout on localnet', () => {
     const aliceId = [...trail0.explorers.entries()].find(([, e]) => e.owner === alice.toSuiAddress())![0];
     for (const dir of plan.dirs) {
       const me = await getExplorer(client, aliceId);
-      const t = new Transaction();
-      if (me.pending) {
-        const tile = tileAt(me.pending.x, me.pending.y);
-        tx.resolveTile(ctx, { gameId, explorerId: aliceId, kind: tile.kind, kindSig: tile.kindSig, ropes: me.ropes, huntLive: true, prizeType: null }, t);
-      }
-      tx.step(ctx, { gameId, explorerId: aliceId, dir }, t);
+      const build = () => {
+        const t = new Transaction();
+        if (me.pending) {
+          const tile = tileAt(me.pending.x, me.pending.y);
+          tx.resolveTile(ctx, { gameId, explorerId: aliceId, kind: tile.kind, kindSig: tile.kindSig, ropes: me.ropes, huntLive: true, prizeType: null }, t);
+        }
+        tx.step(ctx, { gameId, explorerId: aliceId, dir }, t);
+        return t;
+      };
       const wait = Math.max(0, me.lastStepMs + 8_500 - Date.now());
       await new Promise((r) => setTimeout(r, me.steps === 0 ? 0 : wait));
-      await exec(alice, t);
+      await execStep(client, alice, build);
     }
     const atRelic = await getExplorer(client, aliceId);
     const [rx, ry] = findRelic(map);

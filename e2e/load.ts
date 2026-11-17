@@ -39,7 +39,7 @@ import {
   type DirectionValue,
   type NetworkConfig,
 } from '@whiteout/core';
-import { ExecError, created, exec, explorerIdOf, faucet, fundFrom, localClient, publish, type Client } from './harness.js';
+import { ExecError, created, exec, execStep, explorerIdOf, faucet, fundFrom, localClient, publish, type Client } from './harness.js';
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce<string[][]>((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1] ?? '']] : acc), []),
@@ -138,17 +138,20 @@ async function main() {
       const me = await getExplorer(client as never, explorerId);
       const options = ([[0, 0, 1], [1, 1, 0], [2, 0, -1], [3, -1, 0]] as const).filter(([, dx, dy]) => safe(me.x + dx, me.y + dy));
       const [dir] = options[Math.floor(Math.random() * options.length)] ?? [0];
-      const t = new Transaction();
-      if (me.pending) {
-        const tile = tiles[tileIndex(me.pending.x, me.pending.y)]!;
-        tx.resolveTile(ctx, { gameId, explorerId, kind: tile.kind, kindSig: tile.kindSig, ropes: me.ropes, huntLive: true, prizeType: null }, t);
-      }
-      tx.step(ctx, { gameId, explorerId, dir: dir as DirectionValue }, t);
+      const build = () => {
+        const t = new Transaction();
+        if (me.pending) {
+          const tile = tiles[tileIndex(me.pending.x, me.pending.y)]!;
+          tx.resolveTile(ctx, { gameId, explorerId, kind: tile.kind, kindSig: tile.kindSig, ropes: me.ropes, huntLive: true, prizeType: null }, t);
+        }
+        tx.step(ctx, { gameId, explorerId, dir: dir as DirectionValue }, t);
+        return t;
+      };
       const wait = lastStep ? lastStep + COOLDOWN + 300 - Date.now() : 0;
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       const start = Date.now();
       try {
-        await exec(client, kp, t);
+        await execStep(client, kp, build);
         lastStep = Date.now();
         const executedMs = Date.now() - start;
         const after = await getExplorer(client as never, explorerId);

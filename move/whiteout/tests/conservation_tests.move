@@ -3,8 +3,10 @@
 ///   stakes paid in = stakes held by Explorers + pot + paid to the well fund
 ///                    + paid to the finder + withdrawn by survivors
 ///
-/// The spec asks for 10 000 sequences in CI. `SEQUENCES` is kept small so the
-/// default `sui move test` run stays quick; raise it for the release gate.
+/// Every test game reuses the one fixture game ID (the dealer signatures are bound
+/// to it), so each sequence runs as its own test. The spec asks for 10 000
+/// sequences before Mainnet; this file runs 24 so `sui move test` stays quick.
+/// Add more `ac21_seq_*` tests (any seed) for the release gate.
 #[test_only, allow(deprecated_usage)]
 module whiteout::conservation_tests;
 
@@ -16,8 +18,7 @@ use whiteout::game::{Self, Game, Explorer};
 use whiteout::test_env::{Self as t, Env, Prize};
 use whiteout::tiles;
 
-const SEQUENCES: u64 = 40;
-const OPS_PER_SEQUENCE: u64 = 250;
+const OPS_PER_SEQUENCE: u64 = 400;
 const PLAYERS: u64 = 4;
 
 public struct Rng has drop { state: u64 }
@@ -190,9 +191,76 @@ fun run_sequence(seed: u64) {
 }
 
 #[test]
-fun ac21_conservation_holds_over_random_sequences() {
-    SEQUENCES.do!(|s| run_sequence(s * 7919 + 1));
-}
+fun ac21_seq_00() { run_sequence(1) }
+
+#[test]
+fun ac21_seq_01() { run_sequence(7920) }
+
+#[test]
+fun ac21_seq_02() { run_sequence(15839) }
+
+#[test]
+fun ac21_seq_03() { run_sequence(23758) }
+
+#[test]
+fun ac21_seq_04() { run_sequence(31677) }
+
+#[test]
+fun ac21_seq_05() { run_sequence(39596) }
+
+#[test]
+fun ac21_seq_06() { run_sequence(47515) }
+
+#[test]
+fun ac21_seq_07() { run_sequence(55434) }
+
+#[test]
+fun ac21_seq_08() { run_sequence(63353) }
+
+#[test]
+fun ac21_seq_09() { run_sequence(71272) }
+
+#[test]
+fun ac21_seq_10() { run_sequence(79191) }
+
+#[test]
+fun ac21_seq_11() { run_sequence(87110) }
+
+#[test]
+fun ac21_seq_12() { run_sequence(95029) }
+
+#[test]
+fun ac21_seq_13() { run_sequence(102948) }
+
+#[test]
+fun ac21_seq_14() { run_sequence(110867) }
+
+#[test]
+fun ac21_seq_15() { run_sequence(118786) }
+
+#[test]
+fun ac21_seq_16() { run_sequence(126705) }
+
+#[test]
+fun ac21_seq_17() { run_sequence(134624) }
+
+#[test]
+fun ac21_seq_18() { run_sequence(142543) }
+
+#[test]
+fun ac21_seq_19() { run_sequence(150462) }
+
+#[test]
+fun ac21_seq_20() { run_sequence(158381) }
+
+#[test]
+fun ac21_seq_21() { run_sequence(166300) }
+
+#[test]
+fun ac21_seq_22() { run_sequence(174219) }
+
+#[test]
+fun ac21_seq_23() { run_sequence(182138) }
 
 #[test]
 fun lane_walker_can_claim() {

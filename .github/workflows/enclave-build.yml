@@ -7,6 +7,7 @@ name: enclave-build
 
 on:
   push:
+    branches: ['**']
     tags: ['dealer-v*']
     paths: ['enclave/whiteout-dealer/**', '.github/workflows/enclave-build.yml']
   workflow_dispatch:

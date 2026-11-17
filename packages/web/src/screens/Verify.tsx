@@ -1,8 +1,9 @@
 /** Trust page (FR23): everything a sceptic needs to check, in one place. */
-import { bcs } from '@mysten/sui/bcs';
 import { useEffect, useState } from 'react';
 import {
   DealerKind,
+  EnclaveBcs,
+  EnclaveConfigBcs,
   checkCiphertexts,
   ciphertextServers,
   getGame,
@@ -12,15 +13,6 @@ import {
 } from '@whiteout/core';
 import { config, suiClient } from '../config';
 import { shortId } from '../lib/format';
-
-const EnclaveBcs = bcs.struct('Enclave', { id: bcs.Address, pk: bcs.vector(bcs.u8()), config_version: bcs.u64(), owner: bcs.Address });
-const EnclaveConfigBcs = bcs.struct('EnclaveConfig', {
-  id: bcs.Address,
-  name: bcs.string(),
-  pcrs: bcs.tuple([bcs.vector(bcs.u8()), bcs.vector(bcs.u8()), bcs.vector(bcs.u8())]),
-  capability_id: bcs.Address,
-  version: bcs.u64(),
-});
 
 interface Report {
   game: GameState;

@@ -266,3 +266,20 @@ export function parseEvent(
     checkpoint: e.checkpoint ?? null,
   } as GameEvent;
 }
+
+// === Nautilus enclave objects (vendored move/enclave) ===
+
+export const EnclaveBcs = bcs.struct('Enclave', {
+  id: bcs.Address,
+  pk: bcs.vector(bcs.u8()),
+  config_version: bcs.u64(),
+  owner: bcs.Address,
+});
+
+export const EnclaveConfigBcs = bcs.struct('EnclaveConfig', {
+  id: bcs.Address,
+  name: bcs.string(),
+  pcrs: bcs.tuple([bcs.vector(bcs.u8()), bcs.vector(bcs.u8()), bcs.vector(bcs.u8())]),
+  capability_id: bcs.Address,
+  version: bcs.u64(),
+});

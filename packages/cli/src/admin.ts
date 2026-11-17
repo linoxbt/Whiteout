@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromHex } from '@whiteout/core';
+import { checkDeployment, printChecks } from './check.js';
 import { exec, loadEnv, type GlobalOpts } from './env.js';
 
 type Deploy = Record<string, unknown> & { upgradeCapIds?: string[]; upgradeCapDestroyDigests?: string[] };
@@ -92,6 +93,15 @@ export function registerAdmin(program: Command) {
       const id = r.created.find((c) => c.type.includes('::enclave::Enclave<'))!.id;
       update(e.deployPath, { dealerEnclaveId: id });
       console.log(`Enclave<DEALER> ${id} (digest ${r.digest})`);
+    });
+
+  admin
+    .command('check-deployment')
+    .description('Verify a deployment from a second machine (spec section 19): PCRs, immutability, IDs, dealer config')
+    .option('--pcrs <file>', 'nitro.pcrs from your own rebuild, to compare with the chain')
+    .action(async (o) => {
+      const e = loadEnv(program.opts<GlobalOpts>(), false);
+      if (!printChecks(await checkDeployment(e, { pcrs: o.pcrs }))) process.exitCode = 1;
     });
 
   admin

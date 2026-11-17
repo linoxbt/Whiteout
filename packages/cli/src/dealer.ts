@@ -1,11 +1,11 @@
 /** Getting a deal: from the enclave over HTTP, or dealt locally (ceremony mode). */
-import { bcs } from '@mysten/sui/bcs';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   bytesEqual,
   checkCiphertexts,
   ciphertextServers,
   deal,
+  EnclaveBcs,
   fromBase64,
   fromHex,
   generateMap,
@@ -51,13 +51,6 @@ export function tilesOf(d: DealFile) {
     return { id: t.id, x, y, ct: fromBase64(t.ct) };
   });
 }
-
-const EnclaveBcs = bcs.struct('Enclave', {
-  id: bcs.Address,
-  pk: bcs.vector(bcs.u8()),
-  config_version: bcs.u64(),
-  owner: bcs.Address,
-});
 
 /** Response of the enclave's POST /deal (spec section 12). */
 interface EnclaveDealResponse {

@@ -115,3 +115,22 @@ describe('watcher alerts', () => {
     expect(alertsFor(base, { ...base, keyFetchErrors: 1, reveals: 20 })).toEqual([]);
   });
 });
+
+import { checkDealerConfig, comparePcrs } from '../src/check.js';
+describe('deployment checks', () => {
+  const ks = { object_id: '0xAA', public_key: 'beef', weight: 1 };
+  const file = { network: 'testnet', package_id: '0x1', threshold: 1, key_servers: [ks] };
+  const expected = { packageId: '0x01', threshold: 1, servers: [{ objectId: '0xaa', weight: 1 }] };
+  it('passes a matching dealer config', () => {
+    expect(checkDealerConfig(file, expected, new Map([['0xaa', 'beef']])).every((c) => c.ok === true)).toBe(true);
+  });
+  it('catches a wrong package, server set or public key', () => {
+    expect(checkDealerConfig({ ...file, package_id: '0x2' }, expected, new Map([['0xaa', 'beef']]))[0]!.ok).toBe(false);
+    expect(checkDealerConfig(file, { ...expected, servers: [{ objectId: '0xbb', weight: 1 }] }, new Map()).some((c) => c.ok === false)).toBe(true);
+    expect(checkDealerConfig(file, expected, new Map([['0xaa', 'cafe']])).at(-1)!.ok).toBe(false);
+  });
+  it('compares PCRs', () => {
+    expect(comparePcrs(['a', 'b', 'c'], ['A', 'B', 'C']).ok).toBe(true);
+    expect(comparePcrs(['a', 'b', 'c'], ['a', 'b', 'd']).ok).toBe(false);
+  });
+});

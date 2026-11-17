@@ -1,0 +1,67 @@
+name: enclave-build
+
+# Reproducible dealer build (spec section 21): two independent runners build the
+# enclave image from the same commit; the job fails unless their PCRs are identical.
+# On a dealer-v* tag the PCRs are attached to a GitHub release, which the Verify page
+# links to as the dealer source.
+
+on:
+  push:
+    tags: ['dealer-v*']
+  workflow_dispatch:
+    inputs:
+      network:
+        description: Network whose pinned config to build (testnet or mainnet)
+        default: testnet
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.builder }}
+    strategy:
+      matrix:
+        builder: [a, b]
+    runs-on: ${{ matrix.builder == 'a' && 'ubuntu-latest' || 'ubuntu-24.04' }}
+    defaults:
+      run:
+        working-directory: enclave/whiteout-dealer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the enclave image
+        env:
+          NETWORK: ${{ inputs.network || (contains(github.ref_name, 'mainnet') && 'mainnet' || 'testnet') }}
+        run: |
+          echo "network=$NETWORK"
+          make NETWORK="$NETWORK"
+          cat out/nitro.pcrs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcrs-${{ matrix.builder }}
+          path: enclave/whiteout-dealer/out/nitro.pcrs
+
+  compare:
+    name: Compare PCRs
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pcrs-*
+      - name: PCRs must match
+        run: |
+          diff pcrs-a/nitro.pcrs pcrs-b/nitro.pcrs
+          if grep -qE '^0{96}' pcrs-a/nitro.pcrs; then echo "All-zero PCRs: debug build"; exit 1; fi
+          echo "Reproducible:"; cat pcrs-a/nitro.pcrs
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/dealer-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp pcrs-a/nitro.pcrs nitro.pcrs
+          gh release create "${{ github.ref_name }}" nitro.pcrs --repo "${{ github.repository }}" \
+            --title "Dealer ${{ github.ref_name }}" --notes "Reproducible dealer build. PCRs matched on two runners." \
+            || gh release upload "${{ github.ref_name }}" nitro.pcrs --repo "${{ github.repository }}" --clobber

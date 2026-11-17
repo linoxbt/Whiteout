@@ -236,7 +236,7 @@ describe('object layouts', () => {
     expect(isEnded(g, 7_201_000)).toBe(true);
 
     const visited = new Uint8Array(72);
-    visited[tileIndex(3, 1) >> 3] |= 1 << (tileIndex(3, 1) & 7);
+    visited[tileIndex(3, 1) >> 3] = 1 << (tileIndex(3, 1) & 7);
     const e = parseExplorer(
       ExplorerBcs.serialize({
         id,

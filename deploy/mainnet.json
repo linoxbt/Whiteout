@@ -1,0 +1,13 @@
+{
+  "network": "mainnet",
+  "packageId": "",
+  "enclavePackageId": "",
+  "enclaveConfigId": "",
+  "dealerEnclaveId": "",
+  "upgradeCapIds": [],
+  "upgradeCapDestroyDigests": [],
+  "dealerSourceUrl": "",
+  "sponsorUrl": "",
+  "enokiPublicKey": "",
+  "googleClientId": ""
+}

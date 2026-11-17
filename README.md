@@ -5,57 +5,46 @@ encrypted with Seal. Key servers release a tile's key only to the player whose
 on-chain Explorer stands on it (or next to it, while wearing goggles). An attested
 Nautilus enclave deals the map, so neither the host nor the developer ever sees it.
 The Move contract checks the dealer's signature on every reveal and holds the prize
-and stakes in escrow.
+and stakes in escrow. Half of every frozen stake funds Lofi Foundation water wells.
 
-Built for CLAY Hackathon III. The full design is the *Whiteout — Build Specification v1.0*.
+Built for CLAY Hackathon III. Design: *Whiteout — Build Specification v1.0*.
+
+## What's here
+
+| Part | Path | |
+| --- | --- | --- |
+| Move package: rules, escrow, Seal policy | `move/whiteout` | 111 Move tests |
+| Shared TypeScript core | `packages/core` | formats, map rules, deal, tx builders, chain reads |
+| Host CLI | `packages/cli` | create, deal, open, status, settle, thaw, verify, admin |
+| Sponsor service | `packages/sponsor` | gas for Google (zkLogin) players, Whiteout calls only |
+| Web client | `packages/web` | play, spectate, thaw, verify |
+| Dealer enclave (Rust, Nautilus) | `enclave/whiteout-dealer` | offline Seal encryption, pinned key servers |
+| End-to-end test | `e2e` | a full hunt on a local Sui network, in CI |
+
+See [docs/architecture.md](docs/architecture.md) for how the pieces fit,
+[docs/deploy.md](docs/deploy.md) to deploy and run a hunt, and
+[docs/verify-a-hunt.md](docs/verify-a-hunt.md) for what anyone can check.
+
+## Develop
+
+Needs Node 22, pnpm 10, Rust (for the dealer) and the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install) (for Move).
+
+```
+pnpm install
+pnpm -r test                     # TypeScript unit tests
+pnpm -r typecheck
+sui move test --path move/whiteout
+(cd enclave/whiteout-dealer/src/nautilus-server && cargo test)
+pnpm --filter @whiteout/web dev  # http://localhost:5173 (set packageId in deploy/testnet.json first)
+```
+
+If you change a signed message layout or the test map, regenerate the Move fixtures
+(`pip install cryptography`, then `python3 move/whiteout/scripts/gen_fixtures.py`).
+All three languages are tested against them.
 
 ## Status
 
-| Part | Path | State |
-| --- | --- | --- |
-| Move package (rules, escrow, Seal policy) | `move/whiteout` | Written, with tests. CI compiles and runs them |
-| Vendored Nautilus enclave package | `move/enclave` | Copied from upstream (see `VENDORED.md`) |
-| Dealer enclave (Rust) | `enclave/whiteout-dealer` | Not started |
-| Shared TS core, web client, sponsor, host CLI | `packages/*` | Not started |
-
-## Move package
-
-```
-move/whiteout/
-  sources/
-    game.move      Game, Explorer, HostCap; lobby, deal, join, step, resolve, freeze, claim, settlement
-    policy.move    seal_approve (player vision) and seal_approve_thaw (after the game ends)
-    tiles.move     signed message formats, kind check, Seal identity encode/decode
-    dealer.move    DEALER witness for Enclave<DEALER>
-    bitmap.move    72-byte visited set
-  tests/           unit tests per acceptance criterion, plus a conservation property test
-  scripts/gen_fixtures.py   signs a test map with a fixed dealer key -> tests/fixtures.move
-```
-
-Run the tests (needs the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install)):
-
-```
-sui move test --path move/whiteout
-```
-
-If you change a signed message layout or the test map, regenerate the fixtures
-(needs `pip install cryptography`):
-
-```
-python3 move/whiteout/scripts/gen_fixtures.py
-```
-
-### Changes from spec v1.0
-
-These follow the review suggestions left in the spec doc:
-
-- **`resolve` takes `&Game`.** A crevasse with no rope goes through the new
-  `resolve_fatal(&mut Game, …)`, so ordinary resolves never write the shared Game
-  object (keeps the R1 fix intact). `resolve` aborts `EUseFatal` (23) for that case.
-- **`seal_approve_thaw(id, g, clock)`** ships alongside `seal_approve`, so the thaw
-  needs no Explorer argument and works for a game nobody joined.
-- **`seal_deal_enclave` accepts only `Enclave<DEALER>`**, so an enclave registered
-  for another app cannot deal a Whiteout game.
-- **`cancel_empty`** cancels a lobby that never received a prize.
-- Public functions that pay out have `*_internal` twins that return balances
-  instead of transferring them, so tests can check every amount.
+All parts are built and tested in CI. Not done yet: deployment (needs a funded key,
+an Enoki project, an AWS Nitro instance and the Seal Mainnet tier), and the open
+questions in spec section 22 (well-fund address, Mainnet key servers, art permission,
+prize, stake).

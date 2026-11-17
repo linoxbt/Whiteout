@@ -4,36 +4,109 @@ on:
   push:
   pull_request:
 
+env:
+  GH_TOKEN: ${{ github.token }}
+
 jobs:
   move:
     name: Move build and tests
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install the Sui CLI (latest testnet release)
-        run: |
-          TAG=$(gh release list --repo MystenLabs/sui --limit 60 --json tagName \
-            --jq '[.[] | select(.tagName | startswith("testnet-"))][0].tagName')
-          echo "Sui release: $TAG"
-          mkdir -p "$RUNNER_TEMP/sui"
-          gh release download "$TAG" --repo MystenLabs/sui \
-            --pattern '*ubuntu-x86_64.tgz' --dir "$RUNNER_TEMP/sui"
-          tar -xzf "$RUNNER_TEMP"/sui/*.tgz -C "$RUNNER_TEMP/sui"
-          SUI_BIN=$(find "$RUNNER_TEMP/sui" -type f -name sui | head -1)
-          chmod +x "$SUI_BIN"
-          dirname "$SUI_BIN" >> "$GITHUB_PATH"
-
+      - uses: ./.github/actions/install-sui
       - name: Check fixtures are up to date
         run: |
           pip install --quiet cryptography
           python3 move/whiteout/scripts/gen_fixtures.py
           git diff --exit-code move/whiteout/tests/fixtures.move
-
       - name: Build
         run: sui move build --path move/whiteout
-
       - name: Test
         run: sui move test --path move/whiteout
+
+  typescript:
+    name: TypeScript packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm -r typecheck
+      - name: Unit tests
+        run: pnpm -r test
+      - name: Build the web client
+        run: pnpm --filter @whiteout/web exec vite build
+
+  dealer:
+    name: Dealer enclave (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: enclave/whiteout-dealer/src/nautilus-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            enclave/whiteout-dealer/src/nautilus-server/target
+          key: dealer-${{ hashFiles('enclave/whiteout-dealer/src/nautilus-server/Cargo.lock') }}
+      - name: Tests
+        run: cargo test --locked
+      - name: Builds for mainnet config too
+        run: cargo check --locked --no-default-features --features mainnet
+      - name: Leak check (spec section 19)
+        run: |
+          # No outbound endpoints.
+          grep -q '^endpoints: \[\]$' src/apps/whiteout/allowed_endpoints.yaml
+          # No log or print statement mentions tile contents, seeds or keys.
+          if grep -rnE '(info|warn|error|debug|trace|println|eprintln)!\(.*(plaintext|map\b|seed|secret|private|eph_kp|kind_sig|clue)' src; then
+            echo "A log line may leak secret material"; exit 1
+          fi
+          # The deal response type carries ciphertext only (comments excepted).
+          if grep -nE 'plaintext|warmth|hazards' src/apps/whiteout/mod.rs | grep -vE '^[0-9]+:\s*//'; then
+            echo "The /deal handler mentions tile contents"; exit 1
+          fi
+
+  localnet:
+    name: End-to-end on localnet
+    runs-on: ubuntu-latest
+    needs: [move, typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-sui
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start a local network
+        run: |
+          nohup sui start --with-faucet --force-regenesis > localnet.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -s -o /dev/null http://127.0.0.1:9123; then echo "localnet up"; break; fi
+            sleep 2
+          done
+          sleep 5
+      - name: Compile to bytecode
+        run: |
+          sui move build --path move/whiteout --dump-bytecode-as-base64 --with-unpublished-dependencies > e2e/build.json 2> build.err || {
+            cat build.err; exit 1; }
+          head -c 200 e2e/build.json; echo
+      - name: Play a hunt
+        working-directory: e2e
+        run: LOCALNET=1 BYTECODE=build.json pnpm exec vitest run localnet.test.ts
+      - name: Localnet log on failure
+        if: failure()
+        run: tail -100 localnet.log

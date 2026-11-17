@@ -87,3 +87,13 @@ describe('durations', () => {
     expect(() => parseDuration('soon')).toThrow();
   });
 });
+
+import { parsePcrs } from '../src/admin.js';
+describe('PCR file parsing', () => {
+  it('reads eif_build output', () => {
+    const a = 'a'.repeat(96), b = 'b'.repeat(96), c = 'c'.repeat(96);
+    expect(parsePcrs(`${a} PCR0\n${b} PCR1\n${c} PCR2\n`)).toEqual([a, b, c]);
+    expect(parsePcrs(JSON.stringify({ PCR0: a, PCR1: b, PCR2: c }))).toEqual([a, b, c]);
+    expect(() => parsePcrs('nothing')).toThrow();
+  });
+});

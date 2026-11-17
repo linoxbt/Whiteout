@@ -30,6 +30,7 @@ export interface Env {
   signer: Ed25519Keypair;
   address: string;
   stateDir: string;
+  deployPath: string;
 }
 
 export interface GlobalOpts {
@@ -48,7 +49,7 @@ export function loadEnv(opts: GlobalOpts, needSigner = true, allowNoPackage = fa
   if (needSigner && !key) throw new Error('Set WHITEOUT_HOST_KEY to the host wallet key (suiprivkey...)');
   const signer = key ? Ed25519Keypair.fromSecretKey(key) : Ed25519Keypair.generate();
   const stateDir = opts.stateDir ?? join(process.cwd(), '.whiteout');
-  return { cfg, deploy, client, signer, address: signer.toSuiAddress(), stateDir };
+  return { cfg, deploy, client, signer, address: signer.toSuiAddress(), stateDir, deployPath };
 }
 
 function stripEmpty<T extends object>(o: T): Partial<T> {

@@ -31,6 +31,7 @@ import {
   verifyThaw,
   type Tile,
 } from '@whiteout/core';
+import { registerAdmin } from './admin.js';
 import { ceremonyDeal, checkDealFile, requestEnclaveDeal, tilesOf, type DealFile } from './dealer.js';
 import {
   confirmTyped,
@@ -389,6 +390,8 @@ function summarize(data: unknown): string {
   if ('kind' in d) d.kind = TILE_KIND_NAMES[Number(d.kind)];
   return JSON.stringify(d, (_k, v) => (typeof v === 'bigint' ? v.toString() : Array.isArray(v) && v.length > 8 ? `[${v.length} bytes]` : v));
 }
+
+registerAdmin(program);
 
 program.parseAsync().catch((err: Error) => {
   console.error(`Error: ${err.message}`);

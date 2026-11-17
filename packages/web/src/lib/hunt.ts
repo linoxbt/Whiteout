@@ -9,7 +9,7 @@ import {
   ExplorerStatus,
   GameStatus,
   STEP_COOLDOWN_MS,
-  SessionKey,
+  type SessionKey,
   TileKind,
   applyEvents,
   canBatchWithStep,
@@ -39,9 +39,10 @@ import { config, suiClient } from '../config';
 import { dAppKit } from '../dappkit';
 import { run, TxError } from './exec';
 import { kvGet, kvSet } from './store';
+import { createSession, hadSession, loadSession } from './session';
 
 export interface Notice {
-  kind: 'info' | 'warn' | 'error' | 'item' | 'freeze' | 'relic';
+  kind: 'info' | 'warn' | 'error' | 'item' | 'freeze' | 'relic' | 'auth';
   text: string;
 }
 
@@ -62,10 +63,11 @@ export interface HuntView {
   integrityProgress: number;
   /** A verified resolve waiting to ride along with the next step (spec review: batching). */
   queuedResolve: Tile | null;
+  /** The first reading session needs the player's consent (spec section 11, Session). */
+  sessionPrompt: boolean;
 }
 
 const seal = makeSealClient(suiClient, config);
-const sessions = new Map<string, SessionKey>();
 
 export class Hunt {
   view: HuntView = {
@@ -82,6 +84,7 @@ export class Hunt {
     integrity: 'unknown',
     integrityProgress: 0,
     queuedResolve: null,
+    sessionPrompt: false,
   };
   #listeners = new Set<() => void>();
   #cursor: string | null = null;
@@ -204,16 +207,34 @@ export class Hunt {
     });
   }
 
-  /** One signature starts a 30-minute reading session. */
+  #consent: { resolve: () => void; reject: (e: Error) => void } | null = null;
+
+  /**
+   * One signature starts a 30-minute reading session. The first time, the player sees
+   * why before the wallet asks; after an expiry the re-prompt is silent (spec section 11).
+   */
   async ensureSession(): Promise<SessionKey> {
-    const key = `${this.address}:${config.packageId}`;
-    const cur = sessions.get(key);
-    if (cur && !cur.isExpired()) return cur;
-    const sk = await SessionKey.create({ address: this.address!, packageId: config.packageId, ttlMin: 30, suiClient });
-    const { signature } = await dAppKit.signPersonalMessage({ message: sk.getPersonalMessage() });
-    await sk.setPersonalMessageSignature(signature);
-    sessions.set(key, sk);
-    return sk;
+    const address = this.address!;
+    const cached = await loadSession(address);
+    if (cached) return cached;
+    if (!(await hadSession(address))) {
+      this.#set({ sessionPrompt: true });
+      await new Promise<void>((resolve, reject) => (this.#consent = { resolve, reject }));
+    }
+    return createSession(address);
+  }
+
+  /** The player tapped "Allow" on the session prompt. */
+  grantSession() {
+    this.#set({ sessionPrompt: false });
+    this.#consent?.resolve();
+    this.#consent = null;
+  }
+
+  declineSession() {
+    this.#set({ sessionPrompt: false });
+    this.#consent?.reject(new Error('Reading session declined'));
+    this.#consent = null;
   }
 
   async step(dir: DirectionValue) {
@@ -309,9 +330,15 @@ export class Hunt {
         tiles.set(`${r.tile.x},${r.tile.y}`, r.tile);
       }
       this.#set({ tiles, revealing: null });
+      void beacon(this.gameId, 'reveal_ok');
       void kvSet(`tiles:${this.gameId}:${this.address}`, [...tiles.values()]);
       this.#maybeQueueResolve();
     } catch (e) {
+      if ((e as Error).message === 'Reading session declined') {
+        this.#set({ revealing: null, notice: { kind: 'warn', text: 'Your tiles stay in the fog until you allow this device to read them.' } });
+        return;
+      }
+      void beacon(this.gameId, 'key_fetch_error');
       this.#set({ revealing: null, notice: { kind: 'warn', text: 'The fog is thick. Retrying the reveal...' } });
       setTimeout(() => void this.#autoReveal(), 3000);
       console.warn('reveal failed', e);
@@ -394,11 +421,15 @@ export class Hunt {
       await fn();
     } catch (e) {
       const err = e as TxError;
-      const text =
-        err.status === 429 ? 'Slow down a moment. You have used this hunt\'s free moves.' :
-        err.abort?.action === 'thaw' ? 'The hunt is over.' :
-        err.message;
-      this.#set({ notice: { kind: 'error', text } });
+      if (err.status === 401) {
+        this.#set({ notice: { kind: 'auth', text: 'Your Google session expired. Log in again: your yeti and its countdown are safe on-chain.' } });
+      } else {
+        const text =
+          err.status === 429 ? 'You have used this hunt\'s free moves. Connect a Sui wallet to keep playing.' :
+          err.abort?.action === 'thaw' ? 'The hunt is over.' :
+          err.message;
+        this.#set({ notice: { kind: 'error', text } });
+      }
       await this.refresh();
     } finally {
       this.#set({ busy: false });
@@ -411,6 +442,21 @@ const ClockBcs = bcs.struct('Clock', { id: bcs.Address, timestamp_ms: bcs.u64() 
 async function readClock(): Promise<number> {
   const { object } = await suiClient.core.getObject({ objectId: '0x6', include: { content: true } });
   return Number(ClockBcs.parse(object.content).timestamp_ms);
+}
+
+/** Anonymous counters for monitoring (spec section 7): no address, only the hunt and the event. */
+async function beacon(gameId: string, event: 'key_fetch_error' | 'reveal_ok') {
+  if (!config.sponsorUrl) return;
+  try {
+    await fetch(`${config.sponsorUrl}/beacon`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ gameId, event }),
+      keepalive: true,
+    });
+  } catch {
+    /* monitoring must never break play */
+  }
 }
 
 const hunts = new Map<string, Hunt>();

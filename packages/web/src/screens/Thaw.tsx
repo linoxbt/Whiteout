@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import {
   ExplorerStatus,
   GameStatus,
-  SessionKey,
   decryptTiles,
   findRelic,
   makeSealClient,
@@ -16,7 +15,7 @@ import {
 } from '@whiteout/core';
 import { Mountain } from '../components/Mountain';
 import { config, suiClient } from '../config';
-import { dAppKit } from '../dappkit';
+import { createSession, loadSession } from '../lib/session';
 import type { Hunt, HuntView } from '../lib/hunt';
 import { amount, shortId } from '../lib/format';
 
@@ -46,9 +45,7 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
     try {
       setStatus('Downloading 576 tiles…');
       const cts = await readAllTiles(config.walrusAggregators, g.quiltId);
-      const sessionKey = await SessionKey.create({ address: account.address, packageId: config.packageId, ttlMin: 30, suiClient });
-      const { signature } = await dAppKit.signPersonalMessage({ message: sessionKey.getPersonalMessage() });
-      await sessionKey.setPersonalMessageSignature(signature);
+      const sessionKey = (await loadSession(account.address)) ?? (await createSession(account.address));
       const seal = makeSealClient(suiClient, config);
       const kinds = new Uint8Array(576);
       for (let i = 0; i < 576; i += 48) {

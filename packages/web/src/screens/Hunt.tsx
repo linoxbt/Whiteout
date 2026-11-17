@@ -1,4 +1,4 @@
-import { useCurrentAccount } from '@mysten/dapp-kit-react';
+import { useCurrentAccount, useDAppKit } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -49,8 +49,35 @@ export function Hunt({ gameId, mode }: { gameId: string; mode?: string }) {
   if (mode === 'spectate') return <>{header}<Spectate v={v} /></>;
   if (hunt.ended && !v.me?.pending) return <>{header}<Thaw hunt={hunt} v={v} /></>;
   if (!account) return <>{header}<Login v={v} /></>;
-  if (!v.me) return <>{header}<Lobby hunt={hunt} v={v} /></>;
-  return <>{header}<Play hunt={hunt} v={v} /></>;
+  const prompt = v.sessionPrompt && <SessionPrompt hunt={hunt} />;
+  if (!v.me) return <>{header}{prompt}<Lobby hunt={hunt} v={v} /></>;
+  return <>{header}{prompt}<Play hunt={hunt} v={v} /></>;
+}
+
+/** Spec section 11, Session: one signature, explained before the wallet asks. */
+function SessionPrompt({ hunt }: { hunt: HuntModel }) {
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-labelledby="session-title">
+      <div className="card">
+        <h2 id="session-title">Allow this device to read your tiles for 30 min</h2>
+        <p>Your wallet will ask for one signature. It cannot move funds: it only lets this browser read the ground under your yeti.</p>
+        <div className="actions">
+          <button className="primary" onClick={() => hunt.grantSession()}>Allow</button>
+          <button onClick={() => hunt.declineSession()}>Not now</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthNotice({ text }: { text: string }) {
+  const dAppKit = useDAppKit();
+  return (
+    <div className="banner error" role="alert">
+      {text}
+      <button onClick={() => void dAppKit.disconnectWallet()}>Log in again</button>
+    </div>
+  );
 }
 
 function Login({ v }: { v: HuntView }) {
@@ -107,7 +134,7 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
   const pendingTile = me.pending ? v.tiles.get(`${me.pending.x},${me.pending.y}`) : undefined;
   const here = v.tiles.get(`${me.x},${me.y}`);
   const canStep =
-    me.status === ExplorerStatus.ACTIVE && !v.busy && cooldown === 0 && hunt.live &&
+    me.status === ExplorerStatus.ACTIVE && !v.busy && !v.error && cooldown === 0 && hunt.live &&
     (!me.pending || (!!v.queuedResolve && v.queuedResolve.x === me.pending.x && v.queuedResolve.y === me.pending.y));
 
   const move = useCallback((d: DirectionValue) => canStep && void hunt.step(d), [canStep, hunt]);
@@ -182,7 +209,8 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         </div>
       )}
 
-      {v.notice && (
+      {v.notice?.kind === 'auth' && <AuthNotice text={v.notice.text} />}
+      {v.notice && v.notice.kind !== 'auth' && (
         <div className={`notice ${v.notice.kind}`} role="status" onClick={() => hunt.dismissNotice()}>
           {v.notice.text}
         </div>

@@ -1,0 +1,6 @@
+[package]
+name = "whiteout"
+edition = "2024"
+
+[dependencies]
+enclave = { local = "../enclave" }

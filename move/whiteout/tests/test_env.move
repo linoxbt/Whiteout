@@ -70,7 +70,9 @@ public fun lobby(entry_stake: u64, max_players: u16): (Game<SUI>, HostCap, Env) 
     let (g, cap) = game::new_lobby<SUI>(entry_stake, max_players, TWO_HOURS, WINDOW, WELL, &mut ctx);
     assert!(object::id(&g) == fixtures::game_id());
     let mut clock = clock::create_for_testing(&mut ctx);
-    clock.set_for_testing(T0);
+    // The test clock never moves backwards within one test, so a second game
+    // in the same test opens at the current time instead of T0.
+    clock.set_for_testing(T0.max(clock::borrow().timestamp_ms()));
     (g, cap, Env { nonce: 1000, clock })
 }
 

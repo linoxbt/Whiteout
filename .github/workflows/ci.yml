@@ -103,7 +103,7 @@ jobs:
       - name: Compile to bytecode
         run: |
           set +e
-          for flags in "--with-unpublished-dependencies" "--with-unpublished-dependencies -e localnet" ""; do
+          for flags in "--with-unpublished-dependencies --build-env testnet" "--build-env testnet"; do
             echo "== sui move build --dump-bytecode-as-base64 $flags"
             sui move build --path move/whiteout --dump-bytecode-as-base64 $flags > e2e/build.json 2> build.err
             code=$?

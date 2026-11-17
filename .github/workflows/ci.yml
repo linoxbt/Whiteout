@@ -95,6 +95,11 @@ jobs:
             sleep 2
           done
           sleep 5
+      - name: Point the Sui client at localnet
+        run: |
+          sui client --yes new-env --alias localnet --rpc http://127.0.0.1:9000 || true
+          sui client --yes switch --env localnet
+          sui client --yes envs
       - name: Compile to bytecode
         run: |
           sui move build --path move/whiteout --dump-bytecode-as-base64 --with-unpublished-dependencies > e2e/build.json 2> build.err || {

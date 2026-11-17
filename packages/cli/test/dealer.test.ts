@@ -97,3 +97,21 @@ describe('PCR file parsing', () => {
     expect(() => parsePcrs('nothing')).toThrow();
   });
 });
+
+import { alertsFor } from '../src/alerts.js';
+describe('watcher alerts', () => {
+  const base = { overdue: 0, overdueFreezes: 0, keyFetchErrors: 0, reveals: 0, sponsorUp: true };
+  it('raises each alert once, on change', () => {
+    expect(alertsFor(null, base)).toEqual([]);
+    expect(alertsFor(base, { ...base, overdue: 2 })).toHaveLength(1);
+    expect(alertsFor({ ...base, overdue: 2 }, { ...base, overdue: 2 })).toEqual([]);
+    expect(alertsFor(base, { ...base, overdueFreezes: 1 })[0]).toMatch(/overdue reveal/);
+    expect(alertsFor(base, { ...base, sponsorUp: false })[0]).toMatch(/sponsor/);
+    expect(alertsFor({ ...base, sponsorUp: false }, { ...base, sponsorUp: false })).toEqual([]);
+  });
+  it('alerts on a high key-fetch error rate only with enough samples', () => {
+    expect(alertsFor(base, { ...base, keyFetchErrors: 3, reveals: 2 })).toEqual([]);
+    expect(alertsFor(base, { ...base, keyFetchErrors: 5, reveals: 10 })[0]).toMatch(/33%/);
+    expect(alertsFor(base, { ...base, keyFetchErrors: 1, reveals: 20 })).toEqual([]);
+  });
+});

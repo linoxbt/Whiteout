@@ -164,6 +164,16 @@ describe('sponsor HTTP API', () => {
     expect((await post('/sponsor/nope', { signature: 's' }, null)).status).toBe(404);
   });
 
+  it('counts anonymous beacons per hunt', async () => {
+    const { app, post } = setup();
+    expect((await post('/beacon', { gameId: GAME, event: 'key_fetch_error' }, null)).status).toBe(204);
+    expect((await post('/beacon', { gameId: GAME, event: 'reveal_ok' }, null)).status).toBe(204);
+    expect((await post('/beacon', { gameId: GAME, event: 'reveal_ok' }, null)).status).toBe(204);
+    expect((await post('/beacon', { gameId: 'nope', event: 'reveal_ok' }, null)).status).toBe(400);
+    expect((await post('/beacon', { gameId: GAME, event: 'whatever' }, null)).status).toBe(400);
+    expect(await (await app.request(`/stats/${GAME}`)).json()).toEqual({ key_fetch_error: 1, reveal_ok: 2 });
+  });
+
   it('reports health', async () => {
     const { app } = setup();
     expect(((await (await app.request('/health')).json()) as { ok: boolean }).ok).toBe(true);

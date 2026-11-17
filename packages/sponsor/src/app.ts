@@ -27,6 +27,8 @@ export interface SponsorConfig {
   allowedOrigins?: string[];
 }
 
+const BEACON_EVENTS = new Set(['key_fetch_error', 'reveal_ok']);
+
 interface Issued {
   at: number;
   sender: string;
@@ -95,6 +97,27 @@ export function makeApp(cfg: SponsorConfig, enoki: Enoki, quota: QuotaStore) {
       stats.enokiErrors++;
       return c.json({ error: `Enoki: ${(e as Error).message}` }, 502);
     }
+  });
+
+  /**
+   * Anonymous client counters (spec section 7, Monitoring): which hunt and what
+   * happened, never who. Used by `whiteout status --watch` for the key-fetch error rate.
+   */
+  app.post('/beacon', async (c) => {
+    const b = (await c.req.json().catch(() => ({}))) as { gameId?: string; event?: string };
+    if (!b.gameId || !/^0x[0-9a-fA-F]{1,64}$/.test(b.gameId) || !BEACON_EVENTS.has(b.event ?? '')) {
+      return c.json({ error: 'bad beacon' }, 400);
+    }
+    await quota.incr(`beacon:${b.gameId.toLowerCase()}:${b.event}`, GAME_TTL_SEC);
+    return c.body(null, 204);
+  });
+
+  app.get('/stats/:gameId', async (c) => {
+    const id = c.req.param('gameId').toLowerCase();
+    const counts = Object.fromEntries(
+      await Promise.all([...BEACON_EVENTS].map(async (e) => [e, await quota.get(`beacon:${id}:${e}`)] as const)),
+    );
+    return c.json(counts);
   });
 
   app.post('/sponsor/:digest', async (c) => {

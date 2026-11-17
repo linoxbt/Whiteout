@@ -32,6 +32,7 @@ import {
   type Tile,
 } from '@whiteout/core';
 import { registerAdmin } from './admin.js';
+import { alert, alertsFor, sponsorSample, type WatchSample } from './alerts.js';
 import { ceremonyDeal, checkDealFile, requestEnclaveDeal, tilesOf, type DealFile } from './dealer.js';
 import {
   confirmTyped,
@@ -142,7 +143,12 @@ program
       const enclaveId = o.enclaveId ?? e.deploy.dealerEnclaveId;
       if (!o.enclaveUrl || !enclaveId) throw new Error('Pass --enclave-url and --enclave-id (or --ceremony).');
       console.log(`Requesting a deal from ${o.enclaveUrl} ...`);
-      d = await requestEnclaveDeal(e, o.game, o.enclaveUrl, enclaveId);
+      try {
+        d = await requestEnclaveDeal(e, o.game, o.enclaveUrl, enclaveId);
+      } catch (err) {
+        await alert(`Deal failed for ${o.game}: ${(err as Error).message}`);
+        throw err;
+      }
     }
     const dealFile = join(e.stateDir, o.game, 'deal.json');
     writeJson(dealFile, d);
@@ -190,6 +196,7 @@ program
     const e = env(!!o.autoFreeze);
     let cursor: string | null = null;
     const trail = emptyTrail();
+    let prev: WatchSample | null = null;
     for (;;) {
       const { game, ctx } = await gameCtx(e, o.game);
       const page = await listGameEvents(e.client, e.cfg.packageId, o.game, cursor);
@@ -205,6 +212,15 @@ program
           `pending=${explorers.filter((x) => x.pending).length} overdue=${overdue.length} ends=${game.endsAt ? new Date(game.endsAt).toISOString() : '-'}`,
       );
       if (game.finder) console.log(`  finder: ${game.finder}`);
+      if (o.watch) {
+        const sample: WatchSample = {
+          overdue: overdue.length,
+          overdueFreezes: trail.frozenAt.filter((f) => f.overdue).length,
+          ...(await sponsorSample(e.cfg.sponsorUrl, o.game)),
+        };
+        for (const a of alertsFor(prev, sample)) await alert(`[${o.game.slice(0, 10)}] ${a}`);
+        prev = sample;
+      }
       if (o.autoFreeze)
         for (const x of overdue) {
           const r = await exec(e, tx.freezeOverdue(ctx, { gameId: o.game, explorerId: x.id }));

@@ -38,11 +38,11 @@ export interface GlobalOpts {
   stateDir?: string;
 }
 
-export function loadEnv(opts: GlobalOpts, needSigner = true): Env {
+export function loadEnv(opts: GlobalOpts, needSigner = true, allowNoPackage = false): Env {
   const deployPath = opts.deploy ?? join(REPO_ROOT, 'deploy', `${opts.network}.json`);
   const deploy: Deploy = JSON.parse(readFileSync(deployPath, 'utf8'));
   const cfg = loadConfig(opts.network, stripEmpty(deploy));
-  if (!cfg.packageId) throw new Error(`packageId is not set in ${deployPath}`);
+  if (!cfg.packageId && !allowNoPackage) throw new Error(`packageId is not set in ${deployPath}`);
   const client = makeClient(cfg);
   const key = process.env.WHITEOUT_HOST_KEY ?? process.env.SUI_PRIVATE_KEY;
   if (needSigner && !key) throw new Error('Set WHITEOUT_HOST_KEY to the host wallet key (suiprivkey...)');

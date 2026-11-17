@@ -1,0 +1,6 @@
+{
+  "network": "mainnet",
+  "package_id": "0x0",
+  "threshold": 2,
+  "key_servers": []
+}

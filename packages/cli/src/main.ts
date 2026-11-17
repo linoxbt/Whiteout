@@ -24,6 +24,7 @@ import {
   makeSealClient,
   readAllTiles,
   storeBlob,
+  toHex,
   storeQuilt,
   thawFile,
   tx,
@@ -40,6 +41,7 @@ import {
   loadRecord,
   next,
   parseDuration,
+  REPO_ROOT,
   saveRecord,
   writeJson,
   type Env,
@@ -330,6 +332,33 @@ program
       const check = verifyThaw(thaw, o.game, game.dealerPk, game.dealTs);
       console.log(check.ok ? `Thaw file: all 576 tiles verify; relic at ${check.relic}` : `Thaw file FAILED: ${check.problems.slice(0, 5).join('; ')}`);
     }
+  });
+
+program
+  .command('pin-dealer')
+  .description('Write the dealer build config (package ID, Seal key servers and their public keys) for this network')
+  .option('--package <id>', 'Whiteout package ID (default: deploy file)')
+  .option('--out <file>', 'output file (default: enclave/whiteout-dealer/src/nautilus-server/config/<network>.json)')
+  .action(async (o) => {
+    const opts = program.opts<GlobalOpts>();
+    const e = loadEnv({ ...opts }, false, true);
+    const packageId = o.package ?? e.cfg.packageId;
+    if (!packageId) throw new Error('No package ID: publish first, or pass --package.');
+    const seal = makeSealClient(e.client, e.cfg);
+    const servers = await seal.getKeyServers();
+    const config = {
+      network: e.cfg.network,
+      package_id: packageId,
+      threshold: e.cfg.sealThreshold,
+      key_servers: e.cfg.sealServers.map((s) => {
+        const ks = [...servers.values()].find((k) => k.objectId.toLowerCase() === s.objectId.toLowerCase());
+        if (!ks) throw new Error(`key server ${s.objectId} not found`);
+        return { object_id: ks.objectId, public_key: toHex(ks.pk), weight: s.weight };
+      }),
+    };
+    const out = o.out ?? join(REPO_ROOT, 'enclave/whiteout-dealer/src/nautilus-server/config', `${e.cfg.network}.json`);
+    writeJson(out, config);
+    console.log(`Wrote ${out}. Rebuild the enclave: its PCRs change with this file (MD16).`);
   });
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,2 @@
+# The dealer needs no outbound network access (spec section 12). Keep this empty.
+endpoints: []

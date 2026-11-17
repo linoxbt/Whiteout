@@ -1,0 +1,48 @@
+[package]
+name = "nautilus-server"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Whiteout dealer: deals one sealed map per request inside an AWS Nitro enclave"
+
+[workspace]
+
+[lib]
+name = "nautilus_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nautilus-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+axum = { version = "0.7", features = ["macros"] }
+bcs = "0.2.1"
+hex = "0.4"
+rand = "0.8.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+base64 = "0.22"
+# Same fastcrypto revision as the Seal crate below, so there is one copy.
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "076bf5ad8cea140dc7cf5c5861c24a36acdf64ce", features = ["aes"] }
+# Seal's encryption, used offline with pinned key-server public keys (A1, MD16).
+seal-crypto = { git = "https://github.com/MystenLabs/seal", rev = "54eff6a7621b9b45905876a4ffd3e675e03a9bfc", package = "crypto" }
+sui-sdk-types = { version = "0.4.0", features = ["serde"] }
+nsm_api = { git = "https://github.com/aws/aws-nitro-enclaves-nsm-api.git/", rev = "8ec7eac72bbb2097f1058ee32c13e1ff232f13e8", package = "aws-nitro-enclaves-nsm-api", optional = true }
+
+[features]
+default = ["testnet"]
+# The enclave build: attestation through the Nitro Secure Module.
+whiteout = ["nsm_api"]
+# Exactly one network: selects config/<network>.json, compiled into the binary.
+testnet = []
+mainnet = []
+
+[profile.release]
+codegen-units = 1
+lto = true

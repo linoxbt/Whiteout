@@ -23,24 +23,42 @@ export function registerAdmin(program: Command) {
     writeFileSync(path, `${JSON.stringify({ ...cur, ...patch }, null, 2)}\n`);
   };
 
+  /** Reads a publish transaction's effects into the deploy file. */
+  async function record(digest: string) {
+    const e = env();
+    const res = await e.client.core.getTransaction({ digest, include: { effects: true, objectTypes: true } });
+    const t = res.Transaction ?? res.FailedTransaction!;
+    const changes = t.effects!.changedObjects;
+    const packageId = changes.find((c) => c.outputState === 'PackageWrite')?.objectId;
+    const typeOf = (id: string) => t.objectTypes?.[id] ?? '';
+    const caps = changes.filter((c) => c.idOperation === 'Created' && typeOf(c.objectId) === '0x2::package::UpgradeCap').map((c) => c.objectId);
+    const dealerCap = changes.find((c) => c.idOperation === 'Created' && /::enclave::Cap<.*::dealer::DEALER>/.test(typeOf(c.objectId)))?.objectId;
+    if (!packageId) throw new Error('No package was published in that transaction.');
+    update(e.deployPath, { packageId, enclavePackageId: packageId, upgradeCapIds: caps, dealerCapId: dealerCap ?? '', publishDigest: digest });
+    console.log(`Package ${packageId}\nUpgradeCap ${caps.join(', ')}\nCap<DEALER> ${dealerCap}\nSaved to ${e.deployPath}`);
+    console.log(`\nNext: whiteout -n ${e.cfg.network} pin-dealer, then build the enclave and run admin enclave-config`);
+  }
+
+  admin
+    .command('publish')
+    .description('Publish the package from compiled bytecode (CI artifact whiteout-bytecode-<network>) and record it')
+    .requiredOption('--bytecode <file>', 'output of sui move build --dump-bytecode-as-base64 --with-unpublished-dependencies')
+    .action(async (o) => {
+      const e = env();
+      const build = JSON.parse(readFileSync(o.bytecode, 'utf8')) as { modules: string[]; dependencies: string[] };
+      const t = new Transaction();
+      const [cap] = t.publish({ modules: build.modules, dependencies: build.dependencies });
+      t.transferObjects([cap!], e.address);
+      const r = await exec(e, t);
+      console.log(`Published in ${r.digest}`);
+      await record(r.digest);
+    });
+
   admin
     .command('record')
     .description('Record the package ID, UpgradeCap and Cap<DEALER> from a publish transaction')
     .requiredOption('--digest <digest>', 'digest of the publish transaction')
-    .action(async (o) => {
-      const e = env();
-      const res = await e.client.core.getTransaction({ digest: o.digest, include: { effects: true, objectTypes: true } });
-      const t = res.Transaction ?? res.FailedTransaction!;
-      const changes = t.effects!.changedObjects;
-      const packageId = changes.find((c) => c.outputState === 'PackageWrite')?.objectId;
-      const typeOf = (id: string) => t.objectTypes?.[id] ?? '';
-      const caps = changes.filter((c) => c.idOperation === 'Created' && typeOf(c.objectId) === '0x2::package::UpgradeCap').map((c) => c.objectId);
-      const dealerCap = changes.find((c) => c.idOperation === 'Created' && /::enclave::Cap<.*::dealer::DEALER>/.test(typeOf(c.objectId)))?.objectId;
-      if (!packageId) throw new Error('No package was published in that transaction.');
-      update(e.deployPath, { packageId, enclavePackageId: packageId, upgradeCapIds: caps, dealerCapId: dealerCap ?? '' });
-      console.log(`Package ${packageId}\nUpgradeCap ${caps.join(', ')}\nCap<DEALER> ${dealerCap}\nSaved to ${e.deployPath}`);
-      console.log(`\nNext: whiteout -n ${e.cfg.network} pin-dealer, then build the enclave and run admin enclave-config`);
-    });
+    .action(async (o) => record(o.digest));
 
   admin
     .command('enclave-config')

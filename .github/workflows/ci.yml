@@ -23,6 +23,15 @@ jobs:
         run: sui move build --path move/whiteout
       - name: Test
         run: sui move test --path move/whiteout
+      - name: Bytecode for publishing (testnet)
+        run: |
+          sui move build --path move/whiteout --dump-bytecode-as-base64 --with-unpublished-dependencies \
+            --build-env testnet > whiteout-testnet.json
+          head -c 120 whiteout-testnet.json; echo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whiteout-bytecode-testnet
+          path: whiteout-testnet.json
 
   typescript:
     name: TypeScript packages

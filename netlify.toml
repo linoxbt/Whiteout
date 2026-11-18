@@ -1,0 +1,21 @@
+# Web client (spec section 21). Netlify site: whiteout-hunt.
+[build]
+  base = "/"
+  command = "pnpm install --frozen-lockfile && pnpm --filter @whiteout/web exec vite build"
+  publish = "packages/web/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  VITE_NETWORK = "testnet"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

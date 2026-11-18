@@ -22,6 +22,7 @@ export const dAppKit = createDAppKit({
   defaultNetwork: config.network,
   createClient: () => makeClient(config),
   walletInitializers: enoki,
+  slushWalletConfig: { appName: 'Whiteout' },
   autoConnect: true,
 });
 

@@ -11,7 +11,7 @@ import {
 } from '@whiteout/core';
 import { Mountain } from '../components/Mountain';
 import type { Hunt as HuntModel, HuntView } from '../lib/hunt';
-import { amount, dealerBadge, kindName, statusLabel, timeLeft, warmthWord } from '../lib/format';
+import { amount, dealerBadge, kindName, shortId, statusLabel, timeLeft, warmthWord } from '../lib/format';
 import { useHunt, useTick } from '../lib/useHunt';
 import { Thaw } from './Thaw';
 
@@ -30,11 +30,17 @@ export function Hunt({ gameId, mode }: { gameId: string; mode?: string }) {
   const header = (
     <div className="hunt-head">
       <div className="crumbs">
-        <a href="#/">← All hunts</a>
+        <a href="#/">← All expeditions</a>
         <span className="row" style={{ gap: 8 }}>
           <span className={`badge ${badge.tone}`}>{badge.text}</span>
           <a className="pill" href={`#/hunt/${gameId}/verify`}>Verify ↗</a>
           {mode !== 'spectate' && <a className="pill" href={`#/hunt/${gameId}/spectate`}>Spectate</a>}
+        </span>
+      </div>
+      <div className="hunt-title">
+        <h1>Expedition</h1>
+        <span className="tele">
+          {shortId(gameId, 6)} / Grid 24 × 24 / {g.dealerKind === 1 ? 'Sealed by enclave' : 'Host-dealt'}
         </span>
       </div>
       <div className="strip">
@@ -108,7 +114,7 @@ function Login({ v }: { v: HuntView }) {
     <div className="lobby-grid">
       <section className="card">
         <span className="eyebrow">Join the hunt</span>
-        <h2 style={{ marginTop: 8 }}>Step onto the mountain</h2>
+        <h2 style={{ marginTop: 10 }}>Step onto the mountain</h2>
         <p className="small" style={{ lineHeight: 1.6 }}>
           Play with Google, no crypto needed, gas is on us. Or connect any Sui wallet.
         </p>
@@ -145,7 +151,7 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
     <div className="lobby-grid">
       <section className="card">
         <span className="eyebrow">How to play</span>
-        <h2 style={{ marginTop: 8 }}>Find the frozen relic</h2>
+        <h2 style={{ marginTop: 10 }}>Find the frozen relic</h2>
         <ol className="rules">
           <li>Your yeti starts at base camp, at the bottom of the mountain.</li>
           <li>Each step reveals only the tile you land on. Warmth tells you how close the relic is: 5 means within 2 tiles.</li>
@@ -182,7 +188,7 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         {v.integrity === 'ok' && <p className="small" style={{ color: 'var(--good)', margin: '0 0 10px' }}>✓ All 576 tiles match what the dealer signed</p>}
         {v.integrity === 'failed' && <div className="banner error">This hunt failed its integrity check. Do not join.</div>}
         <button className="primary big" disabled={v.busy || v.integrity !== 'ok'} onClick={() => void hunt.join(column)}>
-          {v.busy ? 'Joining…' : 'Join the hunt'}
+          {v.busy ? 'Joining…' : 'Set out →'}
         </button>
         {v.notice && <div className={`notice ${v.notice.kind}`} onClick={() => hunt.dismissNotice()}>{v.notice.text}</div>}
       </section>

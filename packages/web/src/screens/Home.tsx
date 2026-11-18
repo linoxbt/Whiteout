@@ -1,8 +1,21 @@
 import { useEffect, useState } from 'react';
-import { getGame, listGames, type GameState } from '@whiteout/core';
+import { TILE_COUNT, getGame, listGames, type GameState } from '@whiteout/core';
+import { Backdrop } from '../components/Backdrop';
 import { config, configured, suiClient } from '../config';
 import { amount, dealerBadge, shortId, statusLabel, timeLeft } from '../lib/format';
 import { useTick } from '../lib/useHunt';
+
+const FIELD_GUIDE = [
+  { word: 'Snow', desc: 'Safe ground. Every tile you reach tells you how warm you are and how many crevasses lie next to you.' },
+  { word: 'Crevasse', desc: 'Step in without a rope and your yeti freezes. Half its stake goes to the Lofi well fund, half to the pot.' },
+  { word: 'Goggles', desc: 'For ten steps you can read the eight tiles around you, not just the one under your feet.' },
+  { word: 'Rope', desc: 'Carries you over one crevasse. Hold up to three.' },
+  { word: 'Relic', desc: 'Frozen somewhere above row twelve. The first yeti to reach it takes the prize and the whole pot.', relic: true },
+];
+
+function seedOf(id: string) {
+  return parseInt(id.slice(-6), 16) || 1;
+}
 
 export function Home() {
   const [games, setGames] = useState<GameState[] | null>(null);
@@ -34,175 +47,187 @@ export function Home() {
   const live = games?.filter((g) => g.status === 1 && now < g.endsAt) ?? [];
   const lobby = games?.filter((g) => g.status === 0) ?? [];
   const past = games?.filter((g) => g.status >= 2 || (g.status === 1 && now >= g.endsAt)) ?? [];
+  const shown = [...live, ...lobby, ...past];
   const yetis = live.reduce((n, g) => n + g.playerCount, 0);
   const pot = live.reduce((n, g) => n + g.pot, 0n);
   const first = live[0];
+  const go = (id: string) => (e: React.MouseEvent) => (e.preventDefault(), document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }));
 
   return (
     <>
       <section className="hero">
-        <span className="pill">
-          <span className="dot live" /> Live on Sui {config.network} · every tile sealed
-        </span>
-        <h1>A relic is buried in the snow.</h1>
-        <p className="lede">
-          Walk a 24×24 mountain one tile at a time. You can only read the ground under your yeti's feet, and nobody, not even
-          the host, knows the map. First to reach the frozen relic takes the prize and the pot.
-        </p>
-        <div className="cta">
-          {first ? (
-            <a className="btn primary" href={`#/hunt/${first.id}`}>
-              Join the live hunt →
+        <Backdrop seed={7} />
+        <span className="coords tele">27°59′N / 86°55′E — {TILE_COUNT} tiles sealed</span>
+        <div className="wrap hero-inner">
+          <span className="tele ice">An expedition on Sui / {new Date().getFullYear()}</span>
+          <h1>
+            White
+            <br />
+            out
+          </h1>
+          <p className="tagline">The relic is still out there. Nobody knows where.</p>
+          <div className="cta">
+            {first ? (
+              <a className="btn primary arrow" href={`#/hunt/${first.id}`}>
+                Join the hunt
+              </a>
+            ) : (
+              <a className="btn primary arrow" href="#expeditions" onClick={go('expeditions')}>
+                See expeditions
+              </a>
+            )}
+            <a className="btn arrow" href="#field-guide" onClick={go('field-guide')}>
+              Field guide
             </a>
-          ) : (
-            <a className="btn primary" href="#hunts" onClick={(e) => (e.preventDefault(), document.getElementById('hunts')?.scrollIntoView({ behavior: 'smooth' }))}>
-              See hunts
-            </a>
-          )}
-          <a className="btn" href="#how" onClick={(e) => (e.preventDefault(), document.getElementById('how')?.scrollIntoView({ behavior: 'smooth' }))}>
-            How it works
-          </a>
-        </div>
-        <div className="stats" aria-label="Right now">
-          <div>
-            <div className="stat-label">Live hunts</div>
-            <div className="stat-value">{games ? live.length : '—'}</div>
           </div>
-          <div>
-            <div className="stat-label">Yetis on the mountain</div>
-            <div className="stat-value">{games ? yetis : '—'}</div>
-          </div>
-          <div>
-            <div className="stat-label">Total pot</div>
-            <div className="stat-value">{games ? amount(pot, '0x2::sui::SUI') : '—'}</div>
+          <div className="hero-bar">
+            <span className="tele">Mountain / Grid 24 × 24</span>
+            <span className="tele signal">
+              <span className={`blip ${live.length ? '' : 'off'}`} />
+              {games ? (live.length ? `Signal detected · ${live.length} live` : 'No signal') : 'Scanning…'}
+            </span>
+            <span className="tele">{games ? `${yetis} yetis on the mountain` : '—'}</span>
           </div>
         </div>
       </section>
 
-      <div id="hunts" />
-      {!configured && (
-        <section className="card center">
-          <h2>Not deployed yet</h2>
-          <p className="small">
-            Set <code>packageId</code> in <code>deploy/{config.network}.json</code> after publishing the Move package.
-          </p>
+      <div className="wrap">
+        <section className="section" id="expeditions">
+          <div className="split">
+            <div className="intro">
+              <span className="tele ice">The mountain / 01</span>
+              <h2 style={{ marginTop: 14 }}>
+                A mountain that
+                <br />
+                <span className="accent">keeps secrets</span>.
+              </h2>
+              <p>
+                Every hunt is a fresh 24 × 24 mountain, dealt in the dark. Each tile is sealed: you can read only the
+                ground under your yeti. Warmth tells you how close the relic is.
+              </p>
+              <div className="readout">
+                <div>
+                  <div className="stat-label">Live</div>
+                  <div className="stat-value">{games ? live.length : '—'}</div>
+                </div>
+                <div>
+                  <div className="stat-label">Yetis</div>
+                  <div className="stat-value">{games ? yetis : '—'}</div>
+                </div>
+                <div>
+                  <div className="stat-label">Pot</div>
+                  <div className="stat-value">{games ? amount(pot, '0x2::sui::SUI').replace(' SUI', '') : '—'}</div>
+                </div>
+              </div>
+            </div>
+            <div>
+              {!configured && <p className="empty">Not deployed yet: set packageId in deploy/{config.network}.json</p>}
+              {error && (
+                <div className="banner error" role="alert">
+                  Signal lost. Retrying… <small className="mono">{error.slice(0, 70)}</small>
+                </div>
+              )}
+              {configured && !games && !error && (
+                <div className="skeleton-list" aria-busy="true">
+                  <div />
+                  <div />
+                </div>
+              )}
+              {games && !shown.length && <p className="empty">No expeditions yet. The next one sets out soon.</p>}
+              <ul className="expeditions">
+                {shown.map((g, i) => (
+                  <Expedition key={g.id} g={g} n={i + 1} now={now} />
+                ))}
+              </ul>
+            </div>
+          </div>
         </section>
-      )}
-      {error && (
-        <div className="banner error" role="alert">
-          Could not reach the network. Retrying… <small>{error.slice(0, 80)}</small>
-        </div>
-      )}
-      {configured && !games && !error && (
-        <div className="skeleton-list" aria-busy="true">
-          <div />
-          <div />
-          <div />
-        </div>
-      )}
-      {games && !games.length && <p className="empty">No hunts yet. The next one opens soon.</p>}
-      <HuntList title="Live now" games={live} now={now} />
-      <HuntList title="Opening soon" games={lobby} now={now} />
-      <HuntList title="Finished" games={past} now={now} />
 
-      <div className="section-title" id="how">
-        <h2>No game master</h2>
-        <span className="eyebrow">How it works</span>
-      </div>
-      <div className="features">
-        <div className="card feature">
-          <div className="icon">
-            <LockIcon />
+        <section className="section" id="field-guide">
+          <div className="section-head">
+            <h2>Field guide</h2>
+            <span className="tele">What lies under the snow / 02</span>
           </div>
-          <h3>Every tile is sealed</h3>
-          <p>Each tile is encrypted with Seal. Key servers release a tile only to the player standing on it, checked on-chain.</p>
-        </div>
-        <div className="card feature">
-          <div className="icon">
-            <ChipIcon />
+          <ol className="field-guide">
+            {FIELD_GUIDE.map((f, i) => (
+              <li key={f.word} className={f.relic ? 'relic' : ''}>
+                <span className="num">{String(i + 1).padStart(3, '0')}</span>
+                <span className="word">{f.word}</span>
+                <span className="desc">{f.desc}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="section" id="protocol">
+          <div className="section-head">
+            <h2>
+              No game <span className="accent">master</span>
+            </h2>
+            <span className="tele">Protocol / 03</span>
           </div>
-          <h3>Nobody knows the map</h3>
-          <p>An attested enclave deals the mountain and signs every tile. The host never sees it, and nothing can be swapped later.</p>
-        </div>
-        <div className="card feature">
-          <div className="icon">
-            <CheckIcon />
+          <div className="protocol">
+            <div>
+              <span className="tele ice">01 — Sealed</span>
+              <h3 style={{ marginTop: 12 }}>Every tile is locked</h3>
+              <p>Each tile is encrypted with Seal. Key servers release it only to the yeti standing on it, checked against the chain.</p>
+            </div>
+            <div>
+              <span className="tele ice">02 — Dealt in the dark</span>
+              <h3 style={{ marginTop: 12 }}>Nobody knows the map</h3>
+              <p>An attested enclave deals the mountain and signs every tile. The host never sees it, and nothing can be swapped later.</p>
+            </div>
+            <div>
+              <span className="tele ice">03 — Thawed in the open</span>
+              <h3 style={{ marginTop: 12 }}>Verify every step</h3>
+              <p>The contract checks every reveal. When the hunt ends the whole mountain thaws, and anyone can audit it.</p>
+            </div>
           </div>
-          <h3>Verify everything</h3>
-          <p>Every reveal is checked by the contract. When the hunt ends the whole map thaws, so anyone can audit every step.</p>
-        </div>
+        </section>
       </div>
     </>
   );
 }
 
-function HuntList({ title, games, now }: { title: string; games: GameState[]; now: number }) {
-  if (!games.length) return null;
+function Expedition({ g, n, now }: { g: GameState; n: number; now: number }) {
+  const badge = dealerBadge(g.dealerKind);
+  const isLive = g.status === 1 && now < g.endsAt;
   return (
-    <section>
-      <div className="section-title">
-        <h2>{title}</h2>
-        <span className="eyebrow">{games.length}</span>
-      </div>
-      <ul className="hunts">
-        {games.map((g) => {
-          const badge = dealerBadge(g.dealerKind);
-          const isLive = g.status === 1 && now < g.endsAt;
-          return (
-            <li key={g.id}>
-              <a className="card hunt-card" href={`#/hunt/${g.id}`}>
-                <span className="go" aria-hidden="true">→</span>
-                <div className="title">
-                  <span className={`dot ${isLive ? 'live' : ''}`} />
-                  {statusLabel(g, now)}
-                  <span className={`badge ${badge.tone}`}>{badge.text}</span>
-                </div>
-                <div className="id">{shortId(g.id, 6)}</div>
-                <div className="kv">
-                  <div>
-                    <span className="k">Entry</span>
-                    <span className="v">{g.entryStake === 0n ? 'Free' : amount(g.entryStake, g.coinType)}</span>
-                  </div>
-                  <div>
-                    <span className="k">Pot</span>
-                    <span className="v">{amount(g.pot, g.coinType)}</span>
-                  </div>
-                  <div>
-                    <span className="k">Yetis</span>
-                    <span className="v">
-                      {g.playerCount}/{g.maxPlayers}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="k">{isLive ? 'Time left' : 'Status'}</span>
-                    <span className="v">{isLive ? timeLeft(g.endsAt - now) : statusLabel(g, now)}</span>
-                  </div>
-                </div>
-              </a>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <li>
+      <a className="exp-card" href={`#/hunt/${g.id}`}>
+        <Backdrop seed={seedOf(g.id)} yeti={false} />
+        <div className="exp-top">
+          <span className="tele signal">
+            <span className={`blip ${isLive ? '' : 'off'}`} />
+            {statusLabel(g, now)}
+          </span>
+          <span className={`badge ${badge.tone}`}>{badge.text}</span>
+        </div>
+        <div className="exp-body">
+          <span className="tele">Expedition {String(n).padStart(2, '0')} / {shortId(g.id, 4)}</span>
+          <h3>{isLive ? timeLeft(g.endsAt - now) : statusLabel(g, now)}</h3>
+          <div className="kv">
+            <div>
+              <span className="k">Entry</span>
+              <span className="v">{g.entryStake === 0n ? 'Free' : amount(g.entryStake, g.coinType)}</span>
+            </div>
+            <div>
+              <span className="k">Pot</span>
+              <span className="v">{amount(g.pot, g.coinType)}</span>
+            </div>
+            <div>
+              <span className="k">Yetis</span>
+              <span className="v">
+                {g.playerCount}/{g.maxPlayers}
+              </span>
+            </div>
+            <div>
+              <span className="k">Enter</span>
+              <span className="v arrow" />
+            </div>
+          </div>
+        </div>
+      </a>
+    </li>
   );
 }
-
-const iconProps = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-const LockIcon = () => (
-  <svg {...iconProps}>
-    <rect x="4" y="11" width="16" height="10" rx="2.5" />
-    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-  </svg>
-);
-const ChipIcon = () => (
-  <svg {...iconProps}>
-    <rect x="6" y="6" width="12" height="12" rx="2" />
-    <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
-  </svg>
-);
-const CheckIcon = () => (
-  <svg {...iconProps}>
-    <path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z" />
-    <path d="m8.5 12 2.5 2.5 4.5-5" />
-  </svg>
-);

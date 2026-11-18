@@ -7,10 +7,12 @@ import {
   GameStatus,
   GRID,
   TileKind,
+  sameId,
   type DirectionValue,
 } from '@whiteout/core';
 import { Backdrop, Clouds } from '../components/Backdrop';
 import { Legend, Mountain } from '../components/Mountain';
+import { GateNotice, HuntTags, NotifyToggle, PrizeLadder, Weather } from '../components/Phase2';
 import { Mark } from '../components/Logo';
 import type { Hunt as HuntModel, HuntView } from '../lib/hunt';
 import { amount, dealerBadge, kindName, shortId, statusLabel, timeLeft, warmthWord } from '../lib/format';
@@ -54,6 +56,7 @@ function HuntScreen({ hunt, v, gameId, mode, account }: { hunt: HuntModel; v: Hu
       <div className="crumbs">
         <a href="#/">← All expeditions</a>
         <span className="row" style={{ gap: 8 }}>
+          <HuntTags g={g} />
           <span className={`badge ${badge.tone}`}>{badge.text}</span>
           <a className="pill" href={`#/hunt/${gameId}/verify`}>Verify ↗</a>
           {mode !== 'spectate' && <a className="pill" href={`#/hunt/${gameId}/spectate`}>Spectate</a>}
@@ -199,7 +202,14 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
           <li>Each step reveals only the tile you land on. Warmth tells you how close the relic is: 5 means within 2 tiles.</li>
           <li>The red number counts crevasses next to you. Step on one without a rope and your yeti freezes.</li>
           <li>Goggles let you see one tile further for 10 steps. A rope carries you over one crevasse.</li>
-          <li>First to reach the relic wins the prize and the whole pot.</li>
+          {g.relics > 1 ? (
+            <li>{g.relics} relics are hidden. Finders rank in the order they claim: each takes the next prize and a share of the pot.</li>
+          ) : (
+            <li>First to reach the relic wins the prize and the whole pot.</li>
+          )}
+          {g.blizzardEveryMs > 0 && (
+            <li>Every {Math.round(g.blizzardEveryMs / 60_000)} minutes a blizzard drops snowdrifts that block tiles for {Math.round(g.blizzardMs / 60_000)} minutes. Nobody is moved.</li>
+          )}
         </ol>
       </section>
       <section className="card">
@@ -234,9 +244,11 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         )}
         {v.integrity === 'ok' && <p className="small" style={{ color: 'var(--good)', margin: '0 0 10px' }}>✓ All 576 tiles match what the dealer signed</p>}
         {v.integrity === 'failed' && <div className="banner error">This hunt failed its integrity check. Do not join.</div>}
-        <button className="primary big" disabled={v.busy || v.integrity !== 'ok'} onClick={() => void hunt.join(column)}>
+        <GateNotice gate={v.gate} name={v.allowlistName} />
+        <button className="primary big" disabled={v.busy || v.integrity !== 'ok' || v.gate === 'not_member' || v.gate === 'checking'} onClick={() => void hunt.join(column)}>
           {v.busy ? 'Joining…' : 'Set out →'}
         </button>
+        {g.relics > 1 && <div style={{ marginTop: 16 }}><PrizeLadder g={g} compact /></div>}
         {v.notice && <div className={`notice ${v.notice.kind}`} onClick={() => hunt.dismissNotice()}>{v.notice.text}</div>}
       </section>
     </div>
@@ -281,14 +293,29 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
   return (
     <section className="play-layout">
       <div>
-        <Mountain trail={v.trail} me={me} address={hunt.address} tiles={v.tiles} revealing={v.revealing} label={description} />
+        <Mountain
+          trail={v.trail}
+          me={me}
+          address={hunt.address}
+          tiles={v.tiles}
+          revealing={v.revealing}
+          claimed={g.claimed}
+          drifts={g.drifts}
+          driftUntil={g.driftUntil}
+          now={now}
+          label={description}
+        />
         <Legend />
         <p className="sr-only" aria-live="polite">{description}</p>
       </div>
 
       <aside className="side">
+        <Weather g={g} now={now} />
         <div className="card">
-          <span className="eyebrow">You are here</span>
+          <div className="row">
+            <span className="eyebrow">You are here</span>
+            <NotifyToggle />
+          </div>
           <div className="here" style={{ marginTop: 10 }}>
             <div className={`tile-chip w${here?.kind === 0 ? here.warmth : ''} k${here?.kind ?? ''}`}>{here ? (KIND_GLYPH[here.kind] ?? '') || here.warmth : '?'}</div>
             <div className="meta">
@@ -335,9 +362,9 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
           </div>
         )}
 
-        {pendingTile?.kind === TileKind.RELIC && hunt.live && (
+        {pendingTile?.kind === TileKind.RELIC && hunt.live && !g.claimed.includes(pendingTile.y * GRID + pendingTile.x) && (
           <button className="primary big" disabled={v.busy} onClick={() => void hunt.resolveNow()}>
-            Claim the frozen relic
+            {g.relics > 1 ? `Claim the relic · ${['1st', '2nd', '3rd'][g.finders.length]} prize` : 'Claim the frozen relic'}
           </button>
         )}
 
@@ -346,16 +373,23 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
             Your yeti fell into a crevasse and froze. Half your stake went to the Lofi well fund, half to the pot. You can keep watching.
           </div>
         )}
-        {finder && <div className="banner relic">You found the frozen relic! The prize and the pot are yours.</div>}
+        {finder && (
+          <div className="banner relic">
+            {g.relics > 1
+              ? `You claimed a relic: ${['1st', '2nd', '3rd'][Math.max(0, g.finders.findIndex((f) => hunt.address && sameId(f, hunt.address)))]} prize, with your share of the pot and your stake.`
+              : 'You found the frozen relic! The prize and the pot are yours.'}
+          </div>
+        )}
+        <PrizeLadder g={g} me={hunt.address} compact />
 
         {!frozen && !finder && (
           <div className="card" style={{ padding: 14 }}>
             <div className="dpad" aria-label="Move">
-              <button aria-label="North" onClick={() => move(Direction.NORTH)} disabled={!canStep}>↑</button>
-              <button aria-label="West" onClick={() => move(Direction.WEST)} disabled={!canStep}>←</button>
+              <button aria-label="North" onClick={() => move(Direction.NORTH)} disabled={!canStep || hunt.drifted(me.x, me.y, Direction.NORTH)}>↑</button>
+              <button aria-label="West" onClick={() => move(Direction.WEST)} disabled={!canStep || hunt.drifted(me.x, me.y, Direction.WEST)}>←</button>
               <Cooldown ms={cooldown} busy={v.busy} />
-              <button aria-label="East" onClick={() => move(Direction.EAST)} disabled={!canStep}>→</button>
-              <button aria-label="South" onClick={() => move(Direction.SOUTH)} disabled={!canStep}>↓</button>
+              <button aria-label="East" onClick={() => move(Direction.EAST)} disabled={!canStep || hunt.drifted(me.x, me.y, Direction.EAST)}>→</button>
+              <button aria-label="South" onClick={() => move(Direction.SOUTH)} disabled={!canStep || hunt.drifted(me.x, me.y, Direction.SOUTH)}>↓</button>
             </div>
             <p className="small center" style={{ margin: '6px 0 0' }}>Arrow keys or WASD</p>
           </div>
@@ -422,10 +456,21 @@ function Spectate({ v }: { v: HuntView }) {
   return (
     <section className="play-layout">
       <div>
-        <Mountain trail={v.trail} me={null} address={null} tiles={new Map()} revealing={null} label="Public trail of the hunt" />
+        <Mountain
+          trail={v.trail}
+          me={null}
+          address={null}
+          tiles={new Map()}
+          revealing={null}
+          claimed={v.game?.claimed}
+          drifts={v.game?.drifts}
+          driftUntil={v.game?.driftUntil}
+          label="Public trail of the hunt"
+        />
         <Legend />
       </div>
       <aside className="side">
+        {v.game && <Weather g={v.game} now={Date.now()} />}
         <div className="card">
           <span className="eyebrow">Public trail</span>
           <p className="small" style={{ lineHeight: 1.6 }}>
@@ -435,9 +480,10 @@ function Spectate({ v }: { v: HuntView }) {
             <div><span className="k">Yetis</span><span className="v">{v.trail.explorers.size}</span></div>
             <div><span className="k">Tiles walked</span><span className="v">{v.trail.resolved.size}</span></div>
             <div><span className="k">Frozen</span><span className="v">{frozen}</span></div>
-            <div><span className="k">Relic</span><span className="v">{v.trail.finder ? 'Found' : 'Hidden'}</span></div>
+            <div><span className="k">{(v.game?.relics ?? 1) > 1 ? 'Relics' : 'Relic'}</span><span className="v">{(v.game?.relics ?? 1) > 1 ? `${v.game!.finders.length}/${v.game!.relics} found` : v.trail.finder ? 'Found' : 'Hidden'}</span></div>
           </div>
         </div>
+        {v.game && <PrizeLadder g={v.game} />}
       </aside>
     </section>
   );

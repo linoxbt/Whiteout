@@ -3,6 +3,7 @@ import { TILE_COUNT, getGame, listGames, type GameState } from '@whiteout/core';
 import { Backdrop, Clouds, Snowfall } from '../components/Backdrop';
 import { Mark } from '../components/Logo';
 import { TrailDemo } from '../components/TrailDemo';
+import { HuntTags } from '../components/Phase2';
 import { CountUp, Disclosure, Words, scrollToId } from '../lib/motion';
 import { config, configured, suiClient } from '../config';
 import { amount, dealerBadge, shortId, statusLabel, timeLeft } from '../lib/format';
@@ -389,6 +390,7 @@ function Expedition({ g, n, now, delay }: { g: GameState; n: number; now: number
         <div className="exp-body">
           <span className="tele">Expedition {String(n).padStart(2, '0')} / {shortId(g.id, 4)}</span>
           <h3>{isLive ? timeLeft(g.endsAt - now) : statusLabel(g, now)}</h3>
+          <HuntTags g={g} />
           <div className="kv">
             <div>
               <span className="k">Entry</span>

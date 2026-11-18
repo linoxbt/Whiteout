@@ -12,6 +12,13 @@ export interface MountainProps {
   /** Full map after the thaw: kinds by index y*24+x. */
   thaw?: Uint8Array | null;
   relic?: [number, number] | null;
+  /** Phase 2: every relic after the thaw, claimed relic tiles, and live drifts. */
+  relics?: Array<[number, number]> | null;
+  claimed?: number[];
+  drifts?: number[];
+  /** Drifts show while now < driftUntil (chain time). */
+  driftUntil?: number;
+  now?: number;
   label: string;
 }
 
@@ -202,11 +209,32 @@ export function Mountain(p: MountainProps) {
       c.lineTo(size, size - 1);
       c.stroke();
 
-      if (p.relic && (!p.thaw || p.relic[1] < thawRows)) {
+      for (const r of p.relics ?? (p.relic ? [p.relic] : [])) {
+        if (p.thaw && r[1] >= thawRows) continue;
         c.strokeStyle = '#e3a82f';
         c.lineWidth = 2;
-        roundRect(c, px(p.relic[0]) - 2, py(p.relic[1]) - 2, cell + 4, cell + 4, cell * 0.22);
+        roundRect(c, px(r[0]) - 2, py(r[1]) - 2, cell + 4, cell + 4, cell * 0.22);
         c.stroke();
+      }
+
+      // Phase 2: a claimed relic is struck through; it is plain ground now.
+      for (const i of p.claimed ?? []) {
+        const x = i % GRID;
+        const y = Math.floor(i / GRID);
+        c.save();
+        c.strokeStyle = 'rgba(16, 34, 51, 0.55)';
+        c.lineWidth = Math.max(1.5, cell * 0.07);
+        c.lineCap = 'round';
+        c.beginPath();
+        c.moveTo(px(x) + cell * 0.22, py(y) + cell * 0.78);
+        c.lineTo(px(x) + cell * 0.78, py(y) + cell * 0.22);
+        c.stroke();
+        c.restore();
+      }
+
+      // Phase 2: snowdrifts from a blizzard, until they melt.
+      if (p.drifts?.length && (p.now ?? Date.now()) < (p.driftUntil ?? 0)) {
+        for (const i of p.drifts) drift(c, px(i % GRID), py(Math.floor(i / GRID)), cell);
       }
 
       // Yetis.
@@ -253,7 +281,7 @@ export function Mountain(p: MountainProps) {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
     };
-  }, [p.trail, p.me, p.address, p.tiles, p.revealing, p.thaw, p.relic, thawRows]);
+  }, [p.trail, p.me, p.address, p.tiles, p.revealing, p.thaw, p.relic, p.relics, p.claimed, p.drifts, p.driftUntil, thawRows]);
 
   return (
     <div ref={wrap} className="mountain">
@@ -350,6 +378,37 @@ function glyph(c: CanvasRenderingContext2D, kind: number, x: number, y: number, 
   c.restore();
 }
 
+/** A blizzard drift: a white mound with wind lines, clearly impassable. */
+function drift(c: CanvasRenderingContext2D, x: number, y: number, s: number) {
+  c.save();
+  c.fillStyle = 'rgba(238, 245, 251, 0.96)';
+  c.strokeStyle = 'rgba(47, 127, 181, 0.55)';
+  c.lineWidth = 1;
+  roundRect(c, x + 1, y + 1, s - 2, s - 2, Math.max(2, s * 0.18));
+  c.fill();
+  c.stroke();
+  c.fillStyle = '#ffffff';
+  c.shadowColor = 'rgba(30, 60, 90, 0.25)';
+  c.shadowBlur = 4;
+  c.beginPath();
+  c.moveTo(x + s * 0.12, y + s * 0.78);
+  c.quadraticCurveTo(x + s * 0.32, y + s * 0.38, x + s * 0.52, y + s * 0.62);
+  c.quadraticCurveTo(x + s * 0.68, y + s * 0.34, x + s * 0.88, y + s * 0.78);
+  c.closePath();
+  c.fill();
+  c.shadowBlur = 0;
+  c.strokeStyle = 'rgba(47, 127, 181, 0.6)';
+  c.lineWidth = Math.max(1, s * 0.05);
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(x + s * 0.18, y + s * 0.26);
+  c.lineTo(x + s * 0.5, y + s * 0.26);
+  c.moveTo(x + s * 0.34, y + s * 0.4);
+  c.lineTo(x + s * 0.7, y + s * 0.4);
+  c.stroke();
+  c.restore();
+}
+
 /** Soft snow drifts, painted once per size. */
 const driftCache = new Map<number, HTMLCanvasElement>();
 function drifts(size: number) {
@@ -403,6 +462,9 @@ export function Legend() {
       </span>
       <span>
         <i className="hz">2</i> Crevasses next to it
+      </span>
+      <span>
+        <i className="drift-key" /> Drift (blizzard)
       </span>
     </div>
   );

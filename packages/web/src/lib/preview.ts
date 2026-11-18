@@ -11,7 +11,9 @@ import {
   STEP_COOLDOWN_MS,
   TileKind,
   emptyTrail,
-  findRelic,
+  findRelics,
+  DIRECTION_DELTA,
+  driftAt,
   generateMap,
   hazardsAt,
   seededRng,
@@ -24,24 +26,27 @@ import {
 } from '@whiteout/core';
 import type { Hunt, HuntView } from './hunt';
 
-export const PREVIEW_STATES = ['login', 'lobby', 'checking', 'session', 'play', 'goggles', 'pending', 'relic', 'frozen', 'finder', 'thaw', 'spectate'] as const;
+export const PREVIEW_STATES = ['login', 'lobby', 'gated', 'checking', 'session', 'play', 'blizzard', 'goggles', 'pending', 'relic', 'frozen', 'finder', 'thaw', 'spectate'] as const;
 export const PREVIEW_ADDRESS = '0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1';
 
 // Built on first use, so importing this module costs nothing.
 let MAP!: Uint8Array;
 let RELIC!: [number, number];
+let RELICS!: Array<[number, number]>;
 let PATH!: Array<[number, number]>;
 let SIG!: Uint8Array;
 function init() {
   if (MAP) return;
-  MAP = generateMap(seededRng(20261118));
-  RELIC = findRelic(MAP);
+  // Phase 2: a ranked hunt with three relics. The path leads to the nearest one.
+  MAP = generateMap(seededRng(20261118), 3);
+  RELICS = findRelics(MAP);
+  RELIC = RELICS.reduce((a, b) => (b[1] < a[1] ? b : a));
   SIG = new Uint8Array(0);
   PATH = pathToRelic();
 }
 
 function tileAt(x: number, y: number): Tile {
-  return { x, y, kind: MAP[tileIndex(x, y)]!, warmth: warmthAt(x, y, RELIC), hazards: hazardsAt(MAP, x, y), kindSig: SIG, clueSig: SIG };
+  return { x, y, kind: MAP[tileIndex(x, y)]!, warmth: warmthAt(x, y, RELICS), hazards: hazardsAt(MAP, x, y), kindSig: SIG, clueSig: SIG };
 }
 
 /** Shortest crevasse-free path from base camp to the relic. */
@@ -108,9 +113,27 @@ function others(trail: ReturnType<typeof emptyTrail>) {
   }
 }
 
+const RIVAL = '0x' + '7'.repeat(64);
+
+/** Twelve drifts scattered near the player's path, never on it (Phase 2 blizzard). */
+function driftsNear(walked: Array<[number, number]>): number[] {
+  const on = new Set(walked.map(([x, y]) => tileIndex(x, y)));
+  const r = seededRng(31);
+  const out: number[] = [];
+  const [mx, my] = walked[walked.length - 1]!;
+  while (out.length < 12) {
+    const x = Math.max(0, Math.min(GRID - 1, mx - 5 + r(11)));
+    const y = Math.max(1, Math.min(GRID - 1, my - 4 + r(10)));
+    const i = tileIndex(x, y);
+    if (!on.has(i) && !out.includes(i) && MAP[i] !== TileKind.RELIC) out.push(i);
+  }
+  return out;
+}
+
 export function makePreview(state: string): Hunt {
   init();
   const now = Date.now();
+  const rivalRelic = RELICS.find((r) => r !== RELIC)!;
   const steps = state === 'relic' || state === 'finder' ? PATH.length - 1 : Math.min(PATH.length - 3, 14);
   const walked = PATH.slice(0, steps + 1);
   const [mx, my] = walked[walked.length - 1]!;
@@ -135,12 +158,32 @@ export function makePreview(state: string): Hunt {
     wellFund: '0x' + 'd4'.repeat(32),
     pot: 450_000_000n,
     explorersTable: '0x0',
-    finder: state === 'finder' ? PREVIEW_ADDRESS : null,
+    finder: state === 'finder' ? PREVIEW_ADDRESS : RIVAL,
     hasPrize: true,
+    relics: 3,
+    potShares: [6000, 2500, 1500],
+    prizesHeld: state === 'finder' ? 1 : 2,
+    prizesDeposited: 3,
+    // A rival already claimed rank 1 at another relic; the player races for rank 2.
+    finders: state === 'finder' ? [RIVAL, PREVIEW_ADDRESS] : ['lobby', 'gated', 'checking', 'session'].includes(state) ? [] : [RIVAL],
+    claimed: state === 'finder' ? [tileIndex(...rivalRelic), tileIndex(...RELIC)] : ['lobby', 'gated', 'checking', 'session'].includes(state) ? [] : [tileIndex(...rivalRelic)],
+    allowlist: state === 'gated' ? '0x' + 'e5'.repeat(32) : null,
+    blizzardEveryMs: 30 * 60_000,
+    blizzardMs: 5 * 60_000,
+    nextBlizzardAt: now + 21 * 60_000,
+    drifts: state === 'blizzard' ? driftsNear(walked) : [],
+    driftUntil: state === 'blizzard' ? now + 4 * 60_000 + 20_000 : 0,
     thawBlob: null,
   };
   const trail = emptyTrail();
   others(trail);
+  [1, 2, 3].forEach((rank) => trail.prizeTypes.set(rank, '0x2::coin::Coin<0x2::sui::SUI>'));
+  trail.prizeType = '0x2::coin::Coin<0x2::sui::SUI>';
+  if (game.finders.length) {
+    trail.finder = RIVAL;
+    trail.finders.push({ rank: 1, finder: RIVAL, explorerId: '0xother0', pot: 270_000_000n, x: rivalRelic[0], y: rivalRelic[1] });
+    trail.resolved.set(`${rivalRelic[0]},${rivalRelic[1]}`, TileKind.RELIC);
+  }
   const tiles = new Map<string, Tile>();
   for (const [x, y] of walked) {
     tiles.set(`${x},${y}`, tileAt(x, y));
@@ -177,7 +220,7 @@ export function makePreview(state: string): Hunt {
     me = { ...me, pending: { x: px, y: py, deadlineMs: now + 4 * 60_000 } };
     if (state === 'relic') tiles.set(`${px},${py}`, tileAt(px, py));
   }
-  if (['login', 'lobby', 'checking', 'session', 'spectate'].includes(state)) me = null;
+  if (['login', 'lobby', 'gated', 'checking', 'session', 'spectate'].includes(state)) me = null;
   trail.explorers.set('0xme', { owner: PREVIEW_ADDRESS, x: mx, y: my, frozen: status === ExplorerStatus.FROZEN, finder: status === ExplorerStatus.FINDER, withdrawn: false, steps });
   if (state === 'finder') trail.finder = '0xme';
 
@@ -200,6 +243,8 @@ export function makePreview(state: string): Hunt {
       integrityProgress: state === 'checking' ? 352 : 576,
       queuedResolve: null,
       sessionPrompt: state === 'session',
+      gate: state === 'gated' ? 'not_member' : 'open',
+      allowlistName: state === 'gated' ? 'Mystic Yeti holders' : null,
       thawMap: state === 'thaw' || state === 'finder' ? MAP : null,
     } as HuntView,
     ctx: { packageId: '0x0', coinType: game.coinType },
@@ -222,6 +267,10 @@ export function makePreview(state: string): Hunt {
     get ended() {
       return !h.live;
     },
+    drifted(x: number, y: number, dir: DirectionValue) {
+      const [dx, dy] = DIRECTION_DELTA[dir];
+      return driftAt(h.view.game!, x + dx, y + dy, Date.now());
+    },
     cooldownLeft() {
       const m = h.view.me;
       return m && m.steps ? Math.max(0, m.lastStepMs + STEP_COOLDOWN_MS - Date.now()) : 0;
@@ -243,6 +292,10 @@ export function makePreview(state: string): Hunt {
     },
     async step(d: DirectionValue) {
       const m = h.view.me!;
+      if (h.drifted(m.x, m.y, d)) {
+        h.set({ notice: { kind: 'warn', text: 'A snowdrift blocks that way until the blizzard passes.' } });
+        return;
+      }
       const nx = Math.max(0, Math.min(GRID - 1, m.x + (d === 1 ? 1 : d === 3 ? -1 : 0)));
       const ny = Math.max(0, Math.min(GRID - 1, m.y + (d === 0 ? 1 : d === 2 ? -1 : 0)));
       const key = `${nx},${ny}`;
@@ -282,7 +335,12 @@ export function makePreview(state: string): Hunt {
       h.set({
         busy: false,
         me: { ...m, pending: null, status: ExplorerStatus.FINDER },
-        game: { ...h.view.game!, status: GameStatus.ENDED_FOUND, finder: PREVIEW_ADDRESS },
+        game: {
+          ...h.view.game!,
+          finders: [...h.view.game!.finders, PREVIEW_ADDRESS],
+          claimed: [...h.view.game!.claimed, tileIndex(m.pending.x, m.pending.y)],
+          prizesHeld: h.view.game!.prizesHeld - 1,
+        },
         notice: { kind: 'relic', text: 'You found the frozen relic! The prize and the pot are yours.' },
       });
     },

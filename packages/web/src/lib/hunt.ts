@@ -12,7 +12,13 @@ import {
   type SessionKey,
   TileKind,
   applyEvents,
+  DIRECTION_DELTA,
+  blizzardDue,
   canBatchWithStep,
+  driftAt,
+  getAllowlist,
+  onAllowlist,
+  relicClaimed,
   checkCiphertexts,
   ciphertextServers,
   decryptTiles,
@@ -40,6 +46,7 @@ import { dAppKit } from '../dappkit';
 import { run, TxError } from './exec';
 import { kvGet, kvSet } from './store';
 import { createSession, hadSession, loadSession } from './session';
+import { notify } from './notify';
 
 export interface Notice {
   kind: 'info' | 'warn' | 'error' | 'item' | 'freeze' | 'relic' | 'auth';
@@ -65,6 +72,9 @@ export interface HuntView {
   queuedResolve: Tile | null;
   /** The first reading session needs the player's consent (spec section 11, Session). */
   sessionPrompt: boolean;
+  /** Phase 2: the connected address against the hunt's allowlist. */
+  gate: 'open' | 'checking' | 'member' | 'not_member';
+  allowlistName: string | null;
   /** Preview builds only: a map to show as already thawed. */
   thawMap?: Uint8Array | null;
 }
@@ -87,6 +97,8 @@ export class Hunt {
     integrityProgress: 0,
     queuedResolve: null,
     sessionPrompt: false,
+    gate: 'open',
+    allowlistName: null,
   };
   #listeners = new Set<() => void>();
   #cursor: string | null = null;
@@ -149,8 +161,11 @@ export class Hunt {
         if (mine) me = await getExplorer(suiClient, mine[0]);
       }
       const tiles = this.view.tiles.size || !me ? this.view.tiles : await this.#loadSavedTiles();
+      const before = this.view.game;
       this.#set({ loading: false, error: null, game, trail: { ...trail }, me, tiles, chainNow: this.now() });
       if (me) void this.#autoReveal();
+      this.#watch(before, game, me);
+      void this.#checkGate(game);
     } catch (e) {
       this.#set({ loading: false, error: navigator.onLine === false ? 'You are offline.' : (e as Error).message });
     }
@@ -172,6 +187,73 @@ export class Hunt {
     const me = this.view.me;
     if (!me || me.steps === 0) return 0;
     return Math.max(0, me.lastStepMs + STEP_COOLDOWN_MS - this.now());
+  }
+
+  // --- Phase 2: gating, blizzards, alerts ---------------------------------------
+
+  #gateFor: string | null = null;
+
+  async #checkGate(game: GameState) {
+    if (!game.allowlist) return this.view.gate !== 'open' && this.#set({ gate: 'open' });
+    const key = `${game.allowlist}:${this.address}`;
+    if (this.#gateFor === key) return;
+    this.#gateFor = key;
+    try {
+      const list = await getAllowlist(suiClient, game.allowlist);
+      this.#set({ allowlistName: list.name, gate: this.address ? 'checking' : 'not_member' });
+      if (!this.address) return;
+      this.#set({ gate: (await onAllowlist(suiClient, list, this.address)) ? 'member' : 'not_member' });
+    } catch {
+      this.#gateFor = null;
+    }
+  }
+
+  #blizzardTried = 0;
+
+  /** Changes since the last read: blizzards, rival finds, deadlines. */
+  #watch(before: GameState | null, game: GameState, me: ExplorerState | null) {
+    const now = this.now();
+    if (before && game.driftUntil > before.driftUntil) {
+      const mins = Math.round(game.blizzardMs / 60_000);
+      this.#set({ notice: { kind: 'warn', text: `Blizzard! ${game.drifts.length} snowdrifts block the way for ${mins} min.` } });
+      notify(`blizzard:${game.id}:${game.driftUntil}`, 'Blizzard on the mountain', `Snowdrifts block ${game.drifts.length} tiles for ${mins} minutes.`);
+    }
+    if (before && game.finders.length > before.finders.length && me && !game.finders.some((f) => sameId(f, me.owner))) {
+      const left = game.relics - game.finders.length;
+      const text = left > 0 ? `A rival claimed a relic. ${left} still frozen out there.` : 'The last relic was claimed.';
+      this.#set({ notice: { kind: 'relic', text } });
+      notify(`claim:${game.id}:${game.finders.length}`, 'A relic was claimed', text);
+    }
+    if (me?.pending && me.status === ExplorerStatus.ACTIVE) {
+      const left = me.pending.deadlineMs - now;
+      if (left < 60_000 && left > 0) notify(`deadline:${me.id}:${me.pending.deadlineMs}`, 'Reveal your tile', 'Under a minute left to reveal your tile, or your yeti freezes.');
+    }
+    if (me && isLive(game, now) && game.endsAt - now < 10 * 60_000) {
+      notify(`ending:${game.id}`, 'The hunt is ending', 'Less than 10 minutes until the mountain thaws.');
+    }
+    // Anyone may start a due blizzard. Active players do it for the hunt after a short
+    // random wait, so several clients rarely race; a lost race is ignored.
+    if (me?.status === ExplorerStatus.ACTIVE && blizzardDue(game, now) && this.#blizzardTried !== game.nextBlizzardAt) {
+      this.#blizzardTried = game.nextBlizzardAt;
+      setTimeout(async () => {
+        const g = this.view.game;
+        if (!g || !blizzardDue(g, this.now()) || this.view.busy) return;
+        try {
+          await run(tx.blizzard(this.ctx, { gameId: this.gameId }), this.wallet, this.address!);
+          await this.refresh();
+        } catch {
+          /* someone else started it, or the wallet declined */
+        }
+      }, 2000 + Math.random() * 18_000);
+    }
+  }
+
+  /** Whether stepping `dir` from (x, y) would walk into a drift right now. */
+  drifted(x: number, y: number, dir: DirectionValue): boolean {
+    const g = this.view.game;
+    if (!g) return false;
+    const [dx, dy] = DIRECTION_DELTA[dir];
+    return driftAt(g, x + dx, y + dy, this.now());
   }
 
   // --- Integrity (R23, AC22) --------------------------------------------------
@@ -202,7 +284,14 @@ export class Hunt {
       if (this.view.integrity !== 'ok' && !(await this.checkIntegrity())) {
         throw new TxError('This hunt failed its integrity check.', null);
       }
-      await run(tx.join(this.ctx, { gameId: this.gameId, stake: game.entryStake, column }), this.wallet, this.address!);
+      if (game.allowlist && this.view.gate === 'not_member') {
+        throw new TxError(`This hunt is for members of "${this.view.allowlistName ?? 'its allowlist'}" only.`, null);
+      }
+      await run(
+        tx.join(this.ctx, { gameId: this.gameId, stake: game.entryStake, column, allowlistId: game.allowlist }),
+        this.wallet,
+        this.address!,
+      );
       await this.refresh();
       await this.ensureSession();
       await this.#autoReveal();
@@ -242,6 +331,10 @@ export class Hunt {
   async step(dir: DirectionValue) {
     const me = this.view.me;
     if (!me || this.view.busy) return;
+    if (this.drifted(me.x, me.y, dir)) {
+      this.#set({ notice: { kind: 'warn', text: 'A snowdrift blocks that way until the blizzard passes.' } });
+      return;
+    }
     await this.#act(async () => {
       const t = new Transaction();
       const q = this.view.queuedResolve;
@@ -375,11 +468,15 @@ export class Hunt {
     const tile = this.view.tiles.get(`${me.pending.x},${me.pending.y}`);
     if (!tile || this.view.queuedResolve) return;
     const live = this.live;
-    if (tile.kind === TileKind.RELIC && live) {
-      this.#set({ notice: { kind: 'relic', text: 'You found the frozen relic!' } });
+    const claimed = !!this.view.game && relicClaimed(this.view.game, tile.x, tile.y);
+    if (tile.kind === TileKind.RELIC && live && !claimed) {
+      this.#set({ notice: { kind: 'relic', text: 'You found a frozen relic!' } });
       return; // the player taps Claim
     }
-    if (!canBatchWithStep(tile.kind, me.ropes, live)) {
+    if (tile.kind === TileKind.RELIC && claimed) {
+      this.#set({ notice: { kind: 'info', text: 'A relic was here, but someone already claimed it.' } });
+    }
+    if (!canBatchWithStep(tile.kind, me.ropes, live, claimed)) {
       void this.resolveNow();
       return;
     }
@@ -402,7 +499,9 @@ export class Hunt {
         kindSig: tile.kindSig,
         ropes: me.ropes,
         huntLive: this.live,
-        prizeType: this.view.trail.prizeType,
+        // The claim takes the next rank's prize.
+        prizeType: this.view.trail.prizeTypes.get((this.view.game?.finders.length ?? 0) + 1) ?? this.view.trail.prizeType,
+        relicClaimed: !!this.view.game && relicClaimed(this.view.game, tile.x, tile.y),
       },
       t,
     );

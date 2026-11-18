@@ -7,20 +7,27 @@ import { useRoute } from './lib/useHunt';
 import { Home } from './screens/Home';
 import { Hunt } from './screens/Hunt';
 import { Verify } from './screens/Verify';
+import { History } from './screens/History';
+import { Host } from './screens/Host';
 
+/** Landing sections (scroll) and pages (routes). */
 const NAV: Array<[string, string]> = [
   ['how', 'How to play'],
   ['expeditions', 'Expeditions'],
   ['rewards', 'Rewards'],
-  ['protocol', 'Protocol'],
   ['faq', 'FAQ'],
+];
+const PAGES: Array<[string, string]> = [
+  ['history', 'History'],
+  ['host', 'Host'],
 ];
 
 const NAV_IDS = NAV.map(([id]) => id);
 
 export function App() {
   const route = useRoute();
-  const home = route[0] !== 'hunt';
+  const section = route[0] ?? '';
+  const home = section === '';
   useSmoothScroll();
   usePointerFx();
   const { down, scrolled } = useScrollDirection();
@@ -37,15 +44,19 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null);
   useRevealAll(mainRef, key);
 
-  // Only the landing page carries the footer; hunt, spectate and verify pages end with their content.
-  const gameId = home ? undefined : route[1];
-  const landing = !gameId;
+  // Only the landing page carries the footer; every other page ends with its content.
+  const gameId = section === 'hunt' ? route[1] : undefined;
   let page;
   if (gameId) {
     page = route[2] === 'verify' ? <Verify gameId={gameId} /> : <Hunt gameId={gameId} mode={route[2]} />;
+  } else if (section === 'history') {
+    page = <History />;
+  } else if (section === 'host') {
+    page = <Host gameId={route[1]} />;
   } else {
     page = <Home />;
   }
+  const landing = page.type === Home;
 
   return (
     <div className="app">
@@ -57,6 +68,10 @@ export function App() {
           <span className="nav-pill" style={pill ? { transform: `translateX(${pill.x}px)`, width: pill.w, opacity: 1 } : { opacity: 0 }} aria-hidden="true" />
           {NAV.map(([id, label]) => (
             <a key={id} data-id={id} className={active === id ? 'active' : ''} href="#/" onClick={() => scrollToId(id)}>{label}</a>
+          ))}
+          <span className="nav-sep" aria-hidden="true" />
+          {PAGES.map(([id, label]) => (
+            <a key={id} href={`#/${id}`} className={section === id ? 'active page-link' : 'page-link'}>{label}</a>
           ))}
         </nav>
         <ConnectButton />
@@ -78,6 +93,8 @@ export function App() {
                 <a href="#/" onClick={() => scrollToId('expeditions')}>Expeditions</a>
                 <a href="#/" onClick={() => scrollToId('how')}>How to play</a>
                 <a href="#/" onClick={() => scrollToId('field-guide')}>Field guide</a>
+                <a href="#/history">Hunt history</a>
+                <a href="#/host">Host a hunt</a>
                 {config.network !== 'mainnet' && <a href="https://faucet.sui.io" target="_blank" rel="noreferrer">Testnet faucet ↗</a>}
               </div>
               <div>

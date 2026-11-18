@@ -5,12 +5,13 @@ import testnet from '../../../deploy/testnet.json';
 const network = (import.meta.env.VITE_NETWORK ?? 'testnet') as 'testnet' | 'mainnet';
 const deploy = Object.fromEntries(
   Object.entries(network === 'mainnet' ? mainnet : testnet).filter(([, v]) => v !== '' && !(Array.isArray(v) && !v.length)),
-) as Partial<NetworkConfig> & { upgradeCapIds?: string[]; dealerSourceUrl?: string };
+) as Partial<NetworkConfig> & { upgradeCapIds?: string[]; dealerSourceUrl?: string; dealerEnclaveId?: string };
 
 const env = import.meta.env;
-export const config: NetworkConfig & { upgradeCapIds: string[] } = {
+export const config: NetworkConfig & { upgradeCapIds: string[]; dealerEnclaveId?: string } = {
   ...loadConfig(network, deploy),
   upgradeCapIds: deploy.upgradeCapIds ?? [],
+  ...(deploy.dealerEnclaveId ? { dealerEnclaveId: deploy.dealerEnclaveId } : {}),
   ...(env.VITE_SPONSOR_URL ? { sponsorUrl: env.VITE_SPONSOR_URL } : {}),
   ...(env.VITE_ENOKI_PUBLIC_KEY ? { enokiPublicKey: env.VITE_ENOKI_PUBLIC_KEY } : {}),
   ...(env.VITE_GOOGLE_CLIENT_ID ? { googleClientId: env.VITE_GOOGLE_CLIENT_ID } : {}),

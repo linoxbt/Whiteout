@@ -6,6 +6,7 @@ import {
   GameStatus,
   decryptTiles,
   findRelic,
+  findRelics,
   makeSealClient,
   readAllTiles,
   readBlob,
@@ -14,6 +15,7 @@ import {
   verifyThaw,
 } from '@whiteout/core';
 import { Legend, Mountain } from '../components/Mountain';
+import { PrizeLadder } from '../components/Phase2';
 import { config, suiClient } from '../config';
 import { createSession, loadSession } from '../lib/session';
 import type { Hunt, HuntView } from '../lib/hunt';
@@ -70,21 +72,30 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
   const me = v.me;
   const toWell = v.trail.frozenAt.reduce((n, f) => n + f.toWell, 0n);
   const relic = map ? findRelic(map) : null;
+  const relics = map ? findRelics(map) : null;
   const canWithdraw = me && me.status === ExplorerStatus.ACTIVE && !me.pending && hunt.ended;
   const unfinalized = g.status === GameStatus.OPEN;
 
   return (
     <section className="play-layout thaw">
       <div>
-        <Mountain trail={v.trail} me={me} address={hunt.address} tiles={v.tiles} revealing={null} thaw={map} relic={relic} label="The whole map after the thaw" />
+        <Mountain trail={v.trail} me={me} address={hunt.address} tiles={v.tiles} revealing={null} thaw={map} relic={relic} relics={relics} claimed={g.claimed} label="The whole map after the thaw" />
         <Legend />
       </div>
       <aside className="side">
         <div className={`card result ${g.finder ? 'found' : ''}`}>
           <span className="eyebrow">{g.finder ? 'Relic found' : 'Hunt over'}</span>
-          <h2 style={{ marginTop: 10 }}>{g.finder ? 'The relic was found' : 'The mountain thaws'}</h2>
+          <h2 style={{ marginTop: 10 }}>
+            {g.relics > 1 && g.finders.length ? `${g.finders.length} of ${g.relics} relics found` : g.finder ? 'The relic was found' : 'The mountain thaws'}
+          </h2>
           <p className="small" style={{ margin: '10px 0 0' }}>
-            {g.finder ? (
+            {g.relics > 1 ? (
+              g.finders.length < g.relics ? (
+                `${g.relics - g.finders.length} relic(s) stayed frozen: the rest of the pot went to the Lofi well fund, and the host takes back the unwon prizes.`
+              ) : (
+                'Every relic was claimed. Each finder took a prize, a share of the pot and their stake.'
+              )
+            ) : g.finder ? (
               <>
                 <strong>{account && sameId(g.finder, account.address) ? 'You' : shortId(g.finder)}</strong> reached it first and took the prize, the pot and
                 their stake.
@@ -94,6 +105,7 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
             )}
           </p>
         </div>
+        <PrizeLadder g={g} me={account?.address} compact />
         <div className="items" aria-label="Results">
           <div>
             <div className="stat-label">Yetis</div>

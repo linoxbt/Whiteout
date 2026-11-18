@@ -37,9 +37,12 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null);
   useRevealAll(mainRef, key);
 
+  // Only the landing page carries the footer; hunt, spectate and verify pages end with their content.
+  const gameId = home ? undefined : route[1];
+  const landing = !gameId;
   let page;
-  if (!home && route[1]) {
-    page = route[2] === 'verify' ? <Verify gameId={route[1]} /> : <Hunt gameId={route[1]} mode={route[2]} />;
+  if (gameId) {
+    page = route[2] === 'verify' ? <Verify gameId={gameId} /> : <Hunt gameId={gameId} mode={route[2]} />;
   } else {
     page = <Home />;
   }
@@ -61,41 +64,43 @@ export function App() {
       <main ref={mainRef} key={key} className={`route ${home ? '' : 'page wrap'}`}>
         {page}
       </main>
-      <footer className="site-foot">
-        <div className="wrap">
-          <div className="foot-grid">
-            <div className="foot-brand">
-              <Logo size={34} />
-              <p>A treasure hunt on Sui with no game master. Every tile is sealed until you stand on it.</p>
-              <span className="pill"><span className="dot live" /> Sui {config.network}</span>
+      {landing && (
+        <footer className="site-foot">
+          <div className="wrap">
+            <div className="foot-grid">
+              <div className="foot-brand">
+                <Logo size={34} />
+                <p>A treasure hunt on Sui with no game master. Every tile is sealed until you stand on it.</p>
+                <span className="pill"><span className="dot live" /> Sui {config.network}</span>
+              </div>
+              <div>
+                <span className="tele">Play</span>
+                <a href="#/" onClick={() => scrollToId('expeditions')}>Expeditions</a>
+                <a href="#/" onClick={() => scrollToId('how')}>How to play</a>
+                <a href="#/" onClick={() => scrollToId('field-guide')}>Field guide</a>
+                {config.network !== 'mainnet' && <a href="https://faucet.sui.io" target="_blank" rel="noreferrer">Testnet faucet ↗</a>}
+              </div>
+              <div>
+                <span className="tele">Learn</span>
+                <a href="#/" onClick={() => scrollToId('rewards')}>Rewards</a>
+                <a href="#/" onClick={() => scrollToId('protocol')}>Protocol</a>
+                <a href="#/" onClick={() => scrollToId('faq')}>FAQ</a>
+              </div>
+              <div>
+                <span className="tele">Built on</span>
+                <span>Sui</span>
+                <span>Seal</span>
+                <span>Walrus</span>
+                <span>Nautilus</span>
+              </div>
             </div>
-            <div>
-              <span className="tele">Play</span>
-              <a href="#/" onClick={() => scrollToId('expeditions')}>Expeditions</a>
-              <a href="#/" onClick={() => scrollToId('how')}>How to play</a>
-              <a href="#/" onClick={() => scrollToId('field-guide')}>Field guide</a>
-              {config.network !== 'mainnet' && <a href="https://faucet.sui.io" target="_blank" rel="noreferrer">Testnet faucet ↗</a>}
-            </div>
-            <div>
-              <span className="tele">Learn</span>
-              <a href="#/" onClick={() => scrollToId('rewards')}>Rewards</a>
-              <a href="#/" onClick={() => scrollToId('protocol')}>Protocol</a>
-              <a href="#/" onClick={() => scrollToId('faq')}>FAQ</a>
-            </div>
-            <div>
-              <span className="tele">Built on</span>
-              <span>Sui</span>
-              <span>Seal</span>
-              <span>Walrus</span>
-              <span>Nautilus</span>
+            <div className="foot-base">
+              <span className="tele">© {new Date().getFullYear()} Whiteout</span>
+              <span className="tele">Half of every frozen stake funds Lofi water wells</span>
             </div>
           </div>
-          <div className="foot-base">
-            <span className="tele">© {new Date().getFullYear()} Whiteout</span>
-            <span className="tele">Half of every frozen stake funds Lofi water wells</span>
-          </div>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

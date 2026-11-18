@@ -2,6 +2,7 @@
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { NetworkConfig } from './config.js';
 import { bcs } from '@mysten/sui/bcs';
+import { normalizeStructTag } from '@mysten/sui/utils';
 import {
   AllowlistEventBcs,
   parseAllowlist,
@@ -171,7 +172,8 @@ export function applyEvents(trail: Trail, events: GameEvent[]): Trail {
   for (const ev of events) {
     switch (ev.name) {
       case 'PrizeDeposited': {
-        const t = ev.data.prize_type.includes('::') ? `0x${ev.data.prize_type.replace(/^0x/, '')}` : ev.data.prize_type;
+        // type_name::into_string omits every 0x, including inside type arguments.
+        const t = ev.data.prize_type.includes('::') ? normalizeStructTag(ev.data.prize_type.replace(/(^|[<,\s])(?!0x)([0-9a-fA-F]{64})::/g, '$10x$2::')) : ev.data.prize_type;
         trail.prizeTypes.set(ev.data.rank, t);
         if (ev.data.rank === 1) trail.prizeType = t;
         break;

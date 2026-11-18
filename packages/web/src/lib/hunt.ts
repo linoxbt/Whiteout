@@ -308,12 +308,24 @@ export class Hunt {
     const address = this.address!;
     const cached = await loadSession(address);
     if (cached) return cached;
-    if (!(await hadSession(address))) {
-      this.#set({ sessionPrompt: true });
-      await new Promise<void>((resolve, reject) => (this.#consent = { resolve, reject }));
-    }
-    return createSession(address);
+    // Single flight: joining and the first reveal both ask at once. A second prompt
+    // would replace the first one's consent callback and leave that caller (and the
+    // reveal lock it holds) waiting forever, stuck in the fog.
+    this.#pendingSession ??= (async () => {
+      try {
+        if (!(await hadSession(address))) {
+          this.#set({ sessionPrompt: true });
+          await new Promise<void>((resolve, reject) => (this.#consent = { resolve, reject }));
+        }
+        return await createSession(address);
+      } finally {
+        this.#pendingSession = null;
+      }
+    })();
+    return this.#pendingSession;
   }
+
+  #pendingSession: Promise<SessionKey> | null = null;
 
   /** The player tapped "Allow" on the session prompt. */
   grantSession() {
@@ -362,6 +374,12 @@ export class Hunt {
       this.#set({ queuedResolve: null });
       await this.refresh();
       this.#afterResolve(tile);
+      const g = this.view.game;
+      if (tile.kind === TileKind.RELIC && this.view.me?.status === ExplorerStatus.FINDER && g) {
+        const rank = g.finders.findIndex((f) => sameId(f, me.owner));
+        const text = g.relics > 1 ? `You claimed the ${['1st', '2nd', '3rd'][Math.max(0, rank)]} prize, your share of the pot and your stake.` : 'You claimed the relic: the prize and the pot are yours.';
+        this.#set({ notice: { kind: 'relic', text } });
+      }
     });
   }
 
@@ -470,7 +488,8 @@ export class Hunt {
     const live = this.live;
     const claimed = !!this.view.game && relicClaimed(this.view.game, tile.x, tile.y);
     if (tile.kind === TileKind.RELIC && live && !claimed) {
-      this.#set({ notice: { kind: 'relic', text: 'You found a frozen relic!' } });
+      // Keep a failed claim's error on screen: the Claim button stays for a retry.
+      if (this.view.notice?.kind !== 'error') this.#set({ notice: { kind: 'relic', text: 'You found a frozen relic!' } });
       return; // the player taps Claim
     }
     if (tile.kind === TileKind.RELIC && claimed) {

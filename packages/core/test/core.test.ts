@@ -387,3 +387,13 @@ describe('errors', () => {
     expect(parseAbort({ MoveAbort: { abortCode: '27' } })?.name).toBe('EDrift');
   });
 });
+
+describe('prize types from events', () => {
+  it('restores 0x inside type arguments (type_name strings have none)', async () => {
+    const { applyEvents, emptyTrail } = await import('../src/index.js');
+    const two = '0'.repeat(63) + '2';
+    const ev = { name: 'PrizeDeposited', data: { game_id: '0x1', prize_id: '0x3', rank: 1, prize_type: `${two}::coin::Coin<${two}::sui::SUI>` } };
+    const t = applyEvents(emptyTrail(), [ev as never]);
+    expect(t.prizeTypes.get(1)).toBe(`0x${two}::coin::Coin<0x${two}::sui::SUI>`);
+  });
+});

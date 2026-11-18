@@ -105,6 +105,11 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
             )}
           </p>
         </div>
+        {g.relics > 1 && account && g.finders.some((f) => sameId(f, account.address)) && (
+          <div className="banner relic">
+            You claimed a relic: the {['1st', '2nd', '3rd'][g.finders.findIndex((f) => sameId(f, account.address))]} prize, your share of the pot and your stake.
+          </div>
+        )}
         <PrizeLadder g={g} me={account?.address} compact />
         <div className="items" aria-label="Results">
           <div>

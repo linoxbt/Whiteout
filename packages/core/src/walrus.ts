@@ -1,3 +1,4 @@
+import { bcs } from '@mysten/sui/bcs';
 /** Walrus Quilt storage over the HTTP publisher/aggregator APIs (spec section 12). */
 import { quiltPatchId } from './identity.js';
 import { withRetry } from './errors.js';
@@ -102,11 +103,39 @@ async function readWithFailover(aggregators: string[], path: string, fetchFn: ty
 }
 
 /** Downloads all 576 tiles, 32 at a time (integrity check before join, spec section 12). */
+/**
+ * All 576 ciphertexts in row-major order. The whole Quilt is fetched in one request
+ * and decoded here: aggregators throttle per-patch reads, so 576 separate requests
+ * take minutes, while the blob arrives in about a second. Falls back to per-tile
+ * reads if the blob cannot be read or decoded. Callers check ct_hash either way.
+ */
 export async function readAllTiles(
   aggregators: string[],
   quiltId: string,
   onProgress?: (done: number) => void,
   fetchFn: typeof fetch = fetch,
+): Promise<Uint8Array[]> {
+  try {
+    const blob = await readWithFailover(aggregators, `/v1/blobs/${quiltId}`, fetchFn);
+    const patches = decodeQuilt(blob);
+    const out: Uint8Array[] = [];
+    for (let i = 0; i < 576; i++) {
+      const ct = patches.get(quiltPatchId(i % 24, Math.floor(i / 24)));
+      if (!ct) throw new Error(`quilt has no ${quiltPatchId(i % 24, Math.floor(i / 24))}`);
+      out.push(ct);
+    }
+    onProgress?.(576);
+    return out;
+  } catch {
+    return readTilesOneByOne(aggregators, quiltId, onProgress, fetchFn);
+  }
+}
+
+async function readTilesOneByOne(
+  aggregators: string[],
+  quiltId: string,
+  onProgress: ((done: number) => void) | undefined,
+  fetchFn: typeof fetch,
 ): Promise<Uint8Array[]> {
   const out: Uint8Array[] = new Array(576);
   let next = 0;
@@ -119,5 +148,78 @@ export async function readAllTiles(
     }
   }
   await Promise.all(Array.from({ length: 32 }, worker));
+  return out;
+}
+
+// === Quilt decoding (Walrus QuiltV1, as in @mysten/walrus QuiltReader) ===
+
+const QuiltPatchTags = bcs.map(bcs.string(), bcs.string());
+const QuiltIndexV1 = bcs.struct('QuiltIndexV1', {
+  patches: bcs.vector(bcs.struct('QuiltPatchV1', { endIndex: bcs.u16(), identifier: bcs.string(), tags: QuiltPatchTags })),
+});
+const QuiltPatchBlobHeader = bcs.struct('QuiltPatchBlobHeader', { version: bcs.u8(), length: bcs.u32(), mask: bcs.u8() });
+
+/** Source symbols for RS2 encoding over `nShards` shards (rows, columns of the blob matrix). */
+function sourceSymbols(nShards: number) {
+  const maxFaulty = Math.floor((nShards - 1) / 3);
+  const minCorrect = nShards - maxFaulty;
+  return { rows: minCorrect - maxFaulty, cols: minCorrect };
+}
+
+/**
+ * Decodes a QuiltV1 blob into its patches by identifier. The blob is a matrix of
+ * rows x cols symbols stored row by row; each patch occupies whole columns, read top
+ * to bottom. Walrus Testnet and Mainnet both run 1 000 shards.
+ */
+export function decodeQuilt(blob: Uint8Array, nShards = 1000): Map<string, Uint8Array> {
+  const { rows, cols } = sourceSymbols(nShards);
+  if (blob.length % (rows * cols) !== 0) throw new Error('blob size does not fit the quilt matrix');
+  const symbolSize = blob.length / (rows * cols);
+  const rowSize = symbolSize * cols;
+  const columnSize = symbolSize * rows;
+
+  const read = (startColumn: number, length: number, offset = 0) => {
+    const out = new Uint8Array(length);
+    const skip = Math.floor(offset / symbolSize);
+    let inSymbol = offset % symbolSize;
+    let col = startColumn + Math.floor(skip / rows);
+    let row = skip % rows;
+    let n = 0;
+    while (n < length) {
+      const base = row * rowSize + col * symbolSize;
+      const from = base + inSymbol;
+      const to = Math.min(base + symbolSize, from + length - n, blob.length);
+      if (from >= blob.length) throw new Error('quilt read out of bounds');
+      out.set(blob.subarray(from, to), n);
+      n += to - from;
+      inSymbol = 0;
+      row = (row + 1) % rows;
+      if (row === 0) col += 1;
+    }
+    return out;
+  };
+  const u16 = (b: Uint8Array) => b[0]! | (b[1]! << 8);
+
+  const head = read(0, 5);
+  if (head[0] !== 1) throw new Error(`unsupported quilt version ${head[0]}`);
+  const indexSize = new DataView(head.buffer, head.byteOffset).getUint32(1, true);
+  const index = QuiltIndexV1.parse(read(0, indexSize, 5));
+  const indexColumns = Math.ceil(indexSize / columnSize);
+
+  const out = new Map<string, Uint8Array>();
+  index.patches.forEach((patch, i) => {
+    const start = i === 0 ? indexColumns : index.patches[i - 1]!.endIndex;
+    const header = QuiltPatchBlobHeader.parse(read(start, 6));
+    let offset = 6;
+    const idLength = u16(read(start, 2, offset));
+    offset += 2 + idLength;
+    let size = header.length - 2 - idLength;
+    if (header.mask & 1) {
+      const tagsSize = u16(read(start, 2, offset));
+      offset += 2 + tagsSize;
+      size -= 2 + tagsSize;
+    }
+    out.set(patch.identifier, read(start, size, offset));
+  });
   return out;
 }

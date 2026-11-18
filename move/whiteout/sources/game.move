@@ -150,11 +150,17 @@ public struct Game<phantom T> has key {
     claimed: vector<u16>,
     /// When set, only members of this allowlist may join.
     allowlist: Option<ID>,
-    blizzard_every_ms: u64,
-    blizzard_ms: u64,
-    next_blizzard_at: u64,
+    /// Blizzards, grouped so Game stays within Sui's 32-field limit. Its fields are
+    /// serialized inline, in order, like any nested struct.
+    weather: Weather,
+}
+
+public struct Weather has copy, drop, store {
+    every_ms: u64,
+    lasts_ms: u64,
+    next_at: u64,
     drifts: vector<u16>,
-    drift_until: u64,
+    until_ms: u64,
 }
 
 public struct Explorer<phantom T> has key {
@@ -458,11 +464,7 @@ public(package) fun new_ranked_lobby<T>(
         finders: vector[],
         claimed: vector[],
         allowlist: option::none(),
-        blizzard_every_ms,
-        blizzard_ms,
-        next_blizzard_at: 0,
-        drifts: vector[],
-        drift_until: 0,
+        weather: Weather { every_ms: blizzard_every_ms, lasts_ms: blizzard_ms, next_at: 0, drifts: vector[], until_ms: 0 },
     };
     let cap = HostCap { id: object::new(ctx), game_id };
     event::emit(LobbyCreated {
@@ -606,7 +608,7 @@ fun open<T>(
     g.quilt_id = quilt_id;
     g.open_at = now;
     g.ends_at = now + g.duration_ms;
-    if (g.blizzard_every_ms > 0) g.next_blizzard_at = now + g.blizzard_every_ms;
+    if (g.weather.every_ms > 0) g.weather.next_at = now + g.weather.every_ms;
     event::emit(GameDealt {
         game_id: g.id.to_inner(),
         dealer_kind,
@@ -911,7 +913,7 @@ entry fun blizzard<T>(g: &mut Game<T>, r: &Random, clock: &Clock, ctx: &mut TxCo
 public(package) fun blizzard_internal<T>(g: &mut Game<T>, gen: &mut RandomGenerator, clock: &Clock) {
     let now = clock.timestamp_ms();
     assert!(g.status == OPEN && now < g.ends_at, EEnded);
-    assert!(g.blizzard_every_ms > 0 && now >= g.next_blizzard_at, ENoBlizzard);
+    assert!(g.weather.every_ms > 0 && now >= g.weather.next_at, ENoBlizzard);
     let mut per_row = vector[];
     (GRID as u64).do!(|_| per_row.push_back(0u64));
     let mut drifts = vector[];
@@ -926,22 +928,22 @@ public(package) fun blizzard_internal<T>(g: &mut Game<T>, gen: &mut RandomGenera
             *vector::borrow_mut(&mut per_row, row) = in_row + 1;
         };
     };
-    g.drifts = drifts;
-    g.drift_until = now + g.blizzard_ms;
+    g.weather.drifts = drifts;
+    g.weather.until_ms = now + g.weather.lasts_ms;
     // The next blizzard keeps the game's rhythm: the next multiple of the interval.
-    let periods = (now - g.open_at) / g.blizzard_every_ms + 1;
-    g.next_blizzard_at = g.open_at + periods * g.blizzard_every_ms;
+    let periods = (now - g.open_at) / g.weather.every_ms + 1;
+    g.weather.next_at = g.open_at + periods * g.weather.every_ms;
     event::emit(BlizzardStarted {
         game_id: g.id.to_inner(),
-        drifts: g.drifts,
-        until_ms: g.drift_until,
-        next_ms: g.next_blizzard_at,
+        drifts: g.weather.drifts,
+        until_ms: g.weather.until_ms,
+        next_ms: g.weather.next_at,
     });
 }
 
 /// True while a drift covers (x, y).
 public fun drift_at<T>(g: &Game<T>, x: u8, y: u8, now: u64): bool {
-    now < g.drift_until && g.drifts.contains(&tiles::index(x, y))
+    now < g.weather.until_ms && g.weather.drifts.contains(&tiles::index(x, y))
 }
 
 /// FR14, MD8. Anyone may freeze an Explorer whose resolve deadline has passed.
@@ -1084,11 +1086,11 @@ public fun claimed<T>(g: &Game<T>): vector<u16> { g.claimed }
 
 public fun allowlist<T>(g: &Game<T>): Option<ID> { g.allowlist }
 
-public fun next_blizzard_at<T>(g: &Game<T>): u64 { g.next_blizzard_at }
+public fun next_blizzard_at<T>(g: &Game<T>): u64 { g.weather.next_at }
 
-public fun drifts<T>(g: &Game<T>): vector<u16> { g.drifts }
+public fun drifts<T>(g: &Game<T>): vector<u16> { g.weather.drifts }
 
-public fun drift_until<T>(g: &Game<T>): u64 { g.drift_until }
+public fun drift_until<T>(g: &Game<T>): u64 { g.weather.until_ms }
 
 public fun thaw_blob<T>(g: &Game<T>): Option<vector<u8>> { g.thaw_blob }
 
@@ -1251,8 +1253,8 @@ public fun destroy_for_testing<T>(g: Game<T>) {
 /// Places drifts directly, so a test can stand a yeti next to one.
 #[test_only]
 public fun set_drifts_for_testing<T>(g: &mut Game<T>, drifts: vector<u16>, until_ms: u64) {
-    g.drifts = drifts;
-    g.drift_until = until_ms;
+    g.weather.drifts = drifts;
+    g.weather.until_ms = until_ms;
 }
 
 #[test_only]

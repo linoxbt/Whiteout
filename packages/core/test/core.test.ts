@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { describe, expect, it } from 'vitest';
@@ -99,6 +99,19 @@ describe('message formats match the Move fixtures', () => {
     expect(m.length).toBe(1 + 8 + 32 + 3);
     expect(m[0]).toBe(2);
     expect(Array.from(m.slice(41))).toEqual([3, 4, 2]);
+  });
+});
+
+describe('Move limits the local test VM does not enforce', () => {
+  it('no struct has more than 32 fields (Sui rejects the publish otherwise)', () => {
+    const dir = fileURLToPath(new URL('../../../move/whiteout/sources/', import.meta.url));
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.move'))) {
+      const src = readFileSync(dir + f, 'utf8');
+      for (const m of src.matchAll(/public struct (\w+)[^{]*\{([^}]*)\}/g)) {
+        const fields = m[2]!.split('\n').filter((l) => /^\s+\w+:\s/.test(l)).length;
+        expect(fields, `${f}: ${m[1]}`).toBeLessThanOrEqual(32);
+      }
+    }
   });
 });
 

@@ -34,7 +34,7 @@ export function PrizeLadder({ g, me, compact = false }: { g: GameState; me?: str
                 <small>{bps / 100}% of the pot</small>
               </span>
               <span className="who">
-                {finder ? (mine ? 'You' : shortId(finder, 4)) : i === next ? `≈ ${amount(nextPot, g.coinType)}` : 'Open'}
+                {finder ? (mine ? 'You' : shortId(finder, 4)) : i === next ? (nextPot > 0n ? `+ ${amount(nextPot, g.coinType)}` : 'Prize + stake') : 'Open'}
               </span>
             </li>
           );

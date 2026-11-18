@@ -1,17 +1,17 @@
 {
   "network": "testnet",
-  "packageId": "0x20ce305b503ca53bfbbc2ff620446d0e080d2d3e200e47ff2ad059c862984c2c",
-  "enclavePackageId": "0x20ce305b503ca53bfbbc2ff620446d0e080d2d3e200e47ff2ad059c862984c2c",
+  "packageId": "0x68ccc2ca6237d0c5a44e16adcd1f26e85772f1029297085a6e257fdcdf48df53",
+  "enclavePackageId": "0x68ccc2ca6237d0c5a44e16adcd1f26e85772f1029297085a6e257fdcdf48df53",
   "enclaveConfigId": "",
   "dealerEnclaveId": "",
   "upgradeCapIds": [
-    "0x8c599e94720682199c7b8d47f61f0410058eee9a85b578553c18c15856e37f82"
+    "0x802c84417e158c4b4e273351b445dcd8292b4cef2d38cbe5c5d13876d53b26bc"
   ],
   "upgradeCapDestroyDigests": [],
   "dealerSourceUrl": "",
   "sponsorUrl": "",
   "enokiPublicKey": "",
   "googleClientId": "",
-  "dealerCapId": "0xac1373cfe7305f20c089ef55dacd562b5612bb0d3fcbb84b98fac394ff4e49a2",
-  "publishDigest": "9DH3KoxPiefgZmEumdpsneVAMNU5gJt87j3b7UD6gBHN"
+  "dealerCapId": "0xee97ec63b16f23822a4cbc3c5345beaa4ef683b718bad61edc71f8140d1c7327",
+  "publishDigest": "6ZZe65jKrT7k8VHQzvx86KGSfSbgVqYAVXMqmbLzEhau"
 }

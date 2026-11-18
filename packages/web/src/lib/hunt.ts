@@ -65,6 +65,8 @@ export interface HuntView {
   queuedResolve: Tile | null;
   /** The first reading session needs the player's consent (spec section 11, Session). */
   sessionPrompt: boolean;
+  /** Preview builds only: a map to show as already thawed. */
+  thawMap?: Uint8Array | null;
 }
 
 const seal = makeSealClient(suiClient, config);

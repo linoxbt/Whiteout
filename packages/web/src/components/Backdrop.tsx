@@ -46,7 +46,7 @@ const LAYERS = [
   { base: 860, rough: 36, peaks: [[200, 120], [900, 90], [1500, 130]] as Array<[number, number]>, fill: '#e8eef4', snow: '#ffffff', snowline: 0.95, mist: 0.0, depth: 0.38 },
 ];
 
-export function Backdrop({ seed = 7, yeti = true, parallax = false }: { seed?: number; yeti?: boolean; parallax?: boolean }) {
+export function Backdrop({ seed = 7, yeti = true, parallax = false, align = 'xMidYMax' }: { seed?: number; yeti?: boolean; parallax?: boolean; align?: string }) {
   const layers = useMemo(() => {
     const r = rng(seed);
     return LAYERS.map((d) => {
@@ -99,7 +99,7 @@ export function Backdrop({ seed = 7, yeti = true, parallax = false }: { seed?: n
 
   const id = `bd${seed}`;
   return (
-    <svg className="backdrop" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    <svg className="backdrop" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio={`${align} slice`} aria-hidden="true">
       <defs>
         <linearGradient id={`${id}sky`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#cfe2f1" />
@@ -125,7 +125,7 @@ export function Backdrop({ seed = 7, yeti = true, parallax = false }: { seed?: n
       </defs>
       <rect width={W} height={H} fill={`url(#${id}sky)`} />
       <g ref={sun}>
-        <circle cx="1220" cy="200" r="260" fill={`url(#${id}sun)`} />
+        <circle className="sun-glow" cx="1220" cy="200" r="260" fill={`url(#${id}sun)`} />
       </g>
       {layers.map((l, i) => (
         <g key={i} ref={(el) => void (groups.current[i] = el)}>
@@ -145,6 +145,48 @@ export function Backdrop({ seed = 7, yeti = true, parallax = false }: { seed?: n
       ))}
       <rect x="0" y={H * 0.7} width={W} height={H * 0.3 + 40} fill={`url(#${id}floor)`} />
     </svg>
+  );
+}
+
+/**
+ * Drifting cloud banks. Each cloud is a soft cluster of radial gradients moved by a
+ * composited CSS transform, so dozens can cross the sky without repainting. Negative
+ * delays spread them across the sky from the first frame. `fog` adds a low valley band
+ * that loops sideways.
+ */
+export function Clouds({ seed = 3, count = 7, fog = true, top = [4, 46] }: { seed?: number; count?: number; fog?: boolean; top?: [number, number] }) {
+  const clouds = useMemo(() => {
+    const r = rng(seed * 97 + 13);
+    return Array.from({ length: count }, (_, i) => {
+      const depth = r(); // 0 far (small, slow, faint) .. 1 near
+      const dur = 110 - depth * 60 + r() * 25;
+      return {
+        key: i,
+        style: {
+          '--w': `${(14 + depth * 22 + r() * 8).toFixed(1)}cqw`,
+          '--o': (0.5 + depth * 0.45).toFixed(2),
+          '--blur': `${(10 - depth * 6).toFixed(1)}px`,
+          top: `${(top[0] + r() * (top[1] - top[0])).toFixed(1)}%`,
+          animationDuration: `${dur.toFixed(0)}s`,
+          animationDelay: `-${(r() * dur).toFixed(1)}s`,
+          zIndex: Math.round(depth * 10),
+        } as React.CSSProperties,
+        shape: `s${1 + Math.floor(r() * 3)}`,
+      };
+    });
+  }, [seed, count, top[0], top[1]]);
+  return (
+    <div className="clouds" aria-hidden="true">
+      {clouds.map((c) => (
+        <i key={c.key} className={`cloud ${c.shape}`} style={c.style} />
+      ))}
+      {fog && (
+        <>
+          <i className="fog back" />
+          <i className="fog front" />
+        </>
+      )}
+    </div>
   );
 }
 

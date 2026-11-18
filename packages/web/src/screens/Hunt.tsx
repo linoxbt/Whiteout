@@ -1,6 +1,6 @@
 import { useCurrentAccount, useDAppKit } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import {
   Direction,
   ExplorerStatus,
@@ -9,15 +9,37 @@ import {
   TileKind,
   type DirectionValue,
 } from '@whiteout/core';
-import { Mountain } from '../components/Mountain';
+import { Backdrop, Clouds } from '../components/Backdrop';
+import { Legend, Mountain } from '../components/Mountain';
+import { Mark } from '../components/Logo';
 import type { Hunt as HuntModel, HuntView } from '../lib/hunt';
 import { amount, dealerBadge, kindName, shortId, statusLabel, timeLeft, warmthWord } from '../lib/format';
 import { useHunt, useTick } from '../lib/useHunt';
+import { makePreview, PREVIEW_ADDRESS } from '../lib/preview';
 import { Thaw } from './Thaw';
 
+/** Design preview (#/hunt/preview-<state>): compiled in only when VITE_PREVIEW=1. */
+const PREVIEW = import.meta.env.VITE_PREVIEW === '1';
+
 export function Hunt({ gameId, mode }: { gameId: string; mode?: string }) {
+  if (PREVIEW && gameId.startsWith('preview-')) return <PreviewHunt gameId={gameId} mode={mode} />;
+  return <LiveHunt gameId={gameId} mode={mode} />;
+}
+
+function PreviewHunt({ gameId, mode }: { gameId: string; mode?: string }) {
+  const state = gameId.slice('preview-'.length);
+  const [hunt] = useState(() => makePreview(state));
+  const v = useSyncExternalStore(hunt.subscribe, hunt.getView);
+  return <HuntScreen hunt={hunt} v={v} gameId={gameId} mode={state === 'spectate' ? 'spectate' : mode} account={state === 'login' ? null : { address: PREVIEW_ADDRESS }} />;
+}
+
+function LiveHunt({ gameId, mode }: { gameId: string; mode?: string }) {
   const [hunt, v] = useHunt(gameId);
   const account = useCurrentAccount();
+  return <HuntScreen hunt={hunt} v={v} gameId={gameId} mode={mode} account={account} />;
+}
+
+function HuntScreen({ hunt, v, gameId, mode, account }: { hunt: HuntModel; v: HuntView; gameId: string; mode?: string; account: { address: string } | null }) {
   useTick(1000);
 
   if (v.loading) return <div className="skeleton-grid" aria-busy="true" />;
@@ -37,11 +59,21 @@ export function Hunt({ gameId, mode }: { gameId: string; mode?: string }) {
           {mode !== 'spectate' && <a className="pill" href={`#/hunt/${gameId}/spectate`}>Spectate</a>}
         </span>
       </div>
-      <div className="hunt-title">
-        <h1>Expedition</h1>
-        <span className="tele">
-          {shortId(gameId, 6)} / Grid 24 × 24 / {g.dealerKind === 1 ? 'Sealed by enclave' : 'Host-dealt'}
-        </span>
+      <div className="hunt-banner">
+        <Backdrop seed={seedOf(gameId)} yeti={false} align="xMidYMid" />
+        <Clouds seed={seedOf(gameId)} count={5} fog={false} top={[0, 40]} />
+        <div className="hunt-title">
+          <div>
+            <span className="tele ice">{g.dealerKind === 1 ? 'Sealed by enclave' : 'Host-dealt'} / Grid 24 × 24</span>
+            <h1>Expedition <span className="thin">{shortId(gameId, 4)}</span></h1>
+          </div>
+          {isLive && (
+            <span className="countdown">
+              <span className="tele">Thaws in</span>
+              <strong>{timeLeft(g.endsAt - now)}</strong>
+            </span>
+          )}
+        </div>
       </div>
       <div className="strip">
         <div>
@@ -52,8 +84,8 @@ export function Hunt({ gameId, mode }: { gameId: string; mode?: string }) {
           </div>
         </div>
         <div>
-          <div className="stat-label">{isLive ? 'Time left' : 'Ended'}</div>
-          <div className="stat-value">{isLive ? timeLeft(g.endsAt - now) : '—'}</div>
+          <div className="stat-label">Entry</div>
+          <div className="stat-value">{g.entryStake === 0n ? 'Free' : amount(g.entryStake, g.coinType)}</div>
         </div>
         <div>
           <div className="stat-label">Pot</div>
@@ -88,8 +120,12 @@ function SessionPrompt({ hunt }: { hunt: HuntModel }) {
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-labelledby="session-title">
       <div className="card">
-        <h2 id="session-title">Allow this device to read your tiles for 30 min</h2>
-        <p>Your wallet will ask for one signature. It cannot move funds: it only lets this browser read the ground under your yeti.</p>
+        <div className="modal-icon"><Mark size={34} /></div>
+        <h2 id="session-title">Let this device read your tiles</h2>
+        <p className="small" style={{ fontSize: '1rem' }}>
+          Your wallet will ask for one signature, good for 30 minutes. It cannot move funds: it only lets this browser read the
+          ground under your yeti.
+        </p>
         <div className="actions">
           <button className="primary" onClick={() => hunt.grantSession()}>Allow</button>
           <button onClick={() => hunt.declineSession()}>Not now</button>
@@ -122,6 +158,12 @@ function Login({ v }: { v: HuntView }) {
           <ConnectButton />
           <a className="btn" href={`#/hunt/${v.game!.id}/spectate`}>Just watch</a>
         </div>
+        <ul className="facts">
+          <li><span className="k">Entry</span><span>{v.game!.entryStake === 0n ? 'Free' : amount(v.game!.entryStake, v.game!.coinType)}</span></li>
+          <li><span className="k">Pot so far</span><span>{amount(v.game!.pot, v.game!.coinType)}</span></li>
+          <li><span className="k">On the mountain</span><span>{v.trail.explorers.size} yetis</span></li>
+          <li><span className="k">Step cooldown</span><span>8 seconds</span></li>
+        </ul>
       </section>
       <MiniTrail v={v} />
     </div>
@@ -177,6 +219,11 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
             <span className="small">Base camp column</span>
             <span className="mono" style={{ fontSize: '1rem' }}>{String(column + 1).padStart(2, '0')}</span>
           </span>
+          <div className="camp-strip" aria-hidden="true">
+            {Array.from({ length: GRID }, (_, i) => (
+              <i key={i} className={i === column ? 'on' : ''} onClick={() => setColumn(i)} />
+            ))}
+          </div>
           <input type="range" min={0} max={GRID - 1} value={column} onChange={(e) => setColumn(Number(e.target.value))} aria-label="Base camp column" />
         </label>
         {v.integrity === 'checking' && (
@@ -235,6 +282,7 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
     <section className="play-layout">
       <div>
         <Mountain trail={v.trail} me={me} address={hunt.address} tiles={v.tiles} revealing={v.revealing} label={description} />
+        <Legend />
         <p className="sr-only" aria-live="polite">{description}</p>
       </div>
 
@@ -242,7 +290,7 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         <div className="card">
           <span className="eyebrow">You are here</span>
           <div className="here" style={{ marginTop: 10 }}>
-            <div className="tile-chip">{here ? (KIND_GLYPH[here.kind] ?? '') || here.warmth : '?'}</div>
+            <div className={`tile-chip w${here?.kind === 0 ? here.warmth : ''} k${here?.kind ?? ''}`}>{here ? (KIND_GLYPH[here.kind] ?? '') || here.warmth : '?'}</div>
             <div className="meta">
               <strong>{here ? kindName(here.kind) : 'In the fog'}</strong>
               <span className="small mono">
@@ -325,7 +373,11 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
   );
 }
 
-const KIND_GLYPH: Record<number, string> = { 1: 'C', 2: 'G', 3: 'R', 4: '★' };
+const KIND_GLYPH: Record<number, string> = { 1: '⚠', 2: '◎', 3: '∞', 4: '◆' };
+
+function seedOf(id: string) {
+  return parseInt(id.slice(-6), 16) || id.length * 7919;
+}
 
 function Cooldown({ ms, busy }: { ms: number; busy: boolean }) {
   const frac = Math.min(1, ms / 8000);
@@ -369,7 +421,10 @@ function Spectate({ v }: { v: HuntView }) {
   const frozen = [...v.trail.explorers.values()].filter((e) => e.frozen).length;
   return (
     <section className="play-layout">
-      <Mountain trail={v.trail} me={null} address={null} tiles={new Map()} revealing={null} label="Public trail of the hunt" />
+      <div>
+        <Mountain trail={v.trail} me={null} address={null} tiles={new Map()} revealing={null} label="Public trail of the hunt" />
+        <Legend />
+      </div>
       <aside className="side">
         <div className="card">
           <span className="eyebrow">Public trail</span>

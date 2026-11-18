@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { TILE_COUNT, getGame, listGames, type GameState } from '@whiteout/core';
-import { Backdrop, Snowfall } from '../components/Backdrop';
+import { Backdrop, Clouds, Snowfall } from '../components/Backdrop';
+import { Mark } from '../components/Logo';
+import { TrailDemo } from '../components/TrailDemo';
 import { CountUp } from '../lib/motion';
 import { config, configured, suiClient } from '../config';
 import { amount, dealerBadge, shortId, statusLabel, timeLeft } from '../lib/format';
@@ -12,6 +14,41 @@ const FIELD_GUIDE = [
   { word: 'Goggles', desc: 'For ten steps you can read the eight tiles around you, not just the one under your feet.' },
   { word: 'Rope', desc: 'Carries you over one crevasse. Hold up to three.' },
   { word: 'Relic', desc: 'Frozen somewhere above row twelve. The first yeti to reach it takes the prize and the whole pot.', relic: true },
+];
+
+const TICKER = [
+  '24 × 24 sealed tiles',
+  'One relic above row 12',
+  'One step every 8 seconds',
+  'Goggles: 10 steps of sight',
+  'Up to 3 ropes',
+  'Half of every frozen stake funds water wells',
+  'Dealt by an attested enclave',
+  'Thawed and verifiable',
+];
+
+const HOW = [
+  { t: 'Pick a starting column', d: 'Every yeti sets out from base camp on the bottom row. Choose your column and pay the entry stake, if there is one.' },
+  { t: 'Step one tile at a time', d: 'North, east, south or west, once every 8 seconds. Only the tile under your feet unseals for you.' },
+  { t: 'Read warmth and hazards', d: 'Each tile tells you how warm you are (0 to 5) and how many crevasses touch it. Goggles and ropes lie in the snow.' },
+  { t: 'Reach the relic first', d: 'It is frozen somewhere above row 12. Stand on it and claim it before anyone else does, or before the clock runs out.' },
+];
+
+const PIPELINE = [
+  { name: 'Nautilus', title: 'Dealt in the dark', desc: 'An attested enclave draws the mountain and signs every tile. Its code is reproducible, and Sui checks its attestation.', icon: () => <ChipIcon /> },
+  { name: 'Seal', title: 'Every tile locked', desc: 'Each tile is encrypted on its own. Key servers release it only to the yeti standing on it, as the contract decides.', icon: () => <LockIcon /> },
+  { name: 'Walrus', title: 'Stored in the open', desc: `All ${TILE_COUNT} sealed tiles live on Walrus. Their hash is committed on-chain before the first step.`, icon: () => <StackIcon /> },
+  { name: 'Sui', title: 'Every step checked', desc: 'The contract checks each move, the cooldown, and the dealer signature on every reveal. Players never wait on each other.', icon: () => <PathIcon /> },
+  { name: 'Thaw', title: 'Audited by anyone', desc: 'When the hunt ends the whole map unseals. Anyone can rebuild it and match it to the hash and signatures.', icon: () => <SunIcon /> },
+];
+
+const FAQ = [
+  { q: 'Can the host see the map?', a: 'Not in an enclave-dealt hunt: the map is drawn inside the enclave and only ever leaves it sealed. A host can also deal a map themselves for practice, but the contract labels it a ceremony hunt and makes it free to enter.' },
+  { q: 'What do I need to play?', a: 'A Sui wallet or a Google sign-in through zkLogin. Every step is a small transaction; when a hunt is sponsored, its gas is covered for you.' },
+  { q: 'What happens if nobody finds the relic?', a: 'After the deadline anyone can settle the hunt. The pot goes to the well fund, every surviving yeti takes its stake back, and the host reclaims the prize.' },
+  { q: 'Can I stall to avoid a crevasse?', a: 'No. Each step must be revealed within a short window. After that anyone can freeze the yeti, even once the hunt has ended.' },
+  { q: 'How do I know it was fair?', a: 'Open the verify page of any finished hunt. It downloads the thawed map from Walrus, checks it against the hash committed on Sui, and checks the dealer signature on every tile.' },
+  { q: 'Where does the well money go?', a: 'Each hunt names a well-fund address on-chain. Half of every frozen stake, and any unclaimed pot, is paid to it directly by the contract.' },
 ];
 
 function seedOf(id: string) {
@@ -58,6 +95,7 @@ export function Home() {
     <>
       <section className="hero">
         <Backdrop seed={7} parallax />
+        <Clouds seed={7} count={9} />
         <Snowfall />
         <span className="coords tele">27°59′N / 86°55′E — {TILE_COUNT} tiles sealed</span>
         <div className="wrap hero-inner">
@@ -82,7 +120,7 @@ export function Home() {
               Field guide
             </a>
           </div>
-          <div className="hero-bar" data-reveal data-delay="200">
+          <div className="hero-bar">
             <span className="tele">Mountain / Grid 24 × 24</span>
             <span className="tele signal">
               <span className={`blip ${live.length ? '' : 'off'}`} />
@@ -94,11 +132,54 @@ export function Home() {
         <span className="scroll-cue" aria-hidden="true" />
       </section>
 
+      <div className="marquee" aria-hidden="true">
+        <div className="marquee-track">
+          {[0, 1].map((k) => (
+            <span key={k}>
+              {TICKER.map((t) => (
+                <span key={t} className="tele">
+                  <Mark size={14} /> {t}
+                </span>
+              ))}
+            </span>
+          ))}
+        </div>
+      </div>
+
       <div className="wrap">
+        <section className="section" id="how">
+          <div className="how">
+            <div className="how-copy">
+              <div data-reveal>
+                <span className="tele ice">How to play / 01</span>
+                <h2 style={{ marginTop: 14 }}>
+                  Read the snow.
+                  <br />
+                  <span className="accent">Follow the warmth.</span>
+                </h2>
+              </div>
+              <ol className="steps">
+                {HOW.map((h, i) => (
+                  <li key={h.t} data-reveal data-delay={i * 90}>
+                    <span className="n">{String(i + 1).padStart(2, '0')}</span>
+                    <div>
+                      <h3>{h.t}</h3>
+                      <p>{h.d}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="how-demo" data-reveal data-delay="150">
+              <TrailDemo />
+            </div>
+          </div>
+        </section>
+
         <section className="section" id="expeditions">
           <div className="split">
             <div className="intro" data-reveal>
-              <span className="tele ice">The mountain / 01</span>
+              <span className="tele ice">Expeditions / 02</span>
               <h2 style={{ marginTop: 14 }}>
                 A mountain that
                 <br />
@@ -141,6 +222,22 @@ export function Home() {
                 {shown.map((g, i) => (
                   <Expedition key={g.id} g={g} n={i + 1} now={now} delay={i * 90} />
                 ))}
+                {games && shown.length < 3 && (
+                  <li data-reveal data-delay={shown.length * 90}>
+                    <div className="exp-card next">
+                      <Backdrop seed={99} yeti={false} />
+                      <Clouds seed={99} count={4} fog={false} top={[4, 34]} />
+                      <div className="exp-top">
+                        <span className="tele signal"><span className="blip off" /> Forming</span>
+                      </div>
+                      <div className="exp-body">
+                        <span className="tele">Expedition {String(shown.length + 1).padStart(2, '0')}</span>
+                        <h3>Next ascent</h3>
+                        <p className="small">A new mountain is dealt for every hunt. Watch this space, or ask a host to open one.</p>
+                      </div>
+                    </div>
+                  </li>
+                )}
               </ul>
             </div>
           </div>
@@ -149,7 +246,7 @@ export function Home() {
         <section className="section" id="field-guide">
           <div className="section-head" data-reveal>
             <h2>Field guide</h2>
-            <span className="tele">What lies under the snow / 02</span>
+            <span className="tele">What lies under the snow / 03</span>
           </div>
           <ol className="field-guide">
             {FIELD_GUIDE.map((f, i) => (
@@ -162,31 +259,109 @@ export function Home() {
           </ol>
         </section>
 
+        <section className="section" id="rewards">
+          <div className="section-head" data-reveal>
+            <h2>
+              Every stake <span className="accent">goes somewhere</span>
+            </h2>
+            <span className="tele">Rewards / 04</span>
+          </div>
+          <div className="rewards">
+            <div className="reward finder" data-reveal>
+              <span className="tele">The finder</span>
+              <div className="reward-figure">
+                <span>Prize</span>
+                <i>+</i>
+                <span>Pot</span>
+                <i>+</i>
+                <span>Stake</span>
+              </div>
+              <p>The first yeti to stand on the relic and prove it ends the hunt. The prize object, the whole pot and its own stake go to that player in one transaction.</p>
+            </div>
+            <div className="reward" data-reveal data-delay="110">
+              <span className="tele">A frozen yeti</span>
+              <div className="split-bar" aria-label="Half to the well fund, half to the pot">
+                <i className="wells"><b>50%</b> Well fund</i>
+                <i className="pot"><b>50%</b> Pot</i>
+              </div>
+              <p>Step into a crevasse with no rope and your yeti freezes. Half its stake goes to the Lofi water-well fund at once; the other half grows the pot for whoever finds the relic.</p>
+            </div>
+            <div className="reward" data-reveal data-delay="220">
+              <span className="tele">Nobody finds it</span>
+              <ul className="reward-list">
+                <li><b>Pot</b> goes to the well fund</li>
+                <li><b>Survivors</b> take their stakes back</li>
+                <li><b>Host</b> reclaims the prize</li>
+              </ul>
+              <p>When time runs out, anyone can settle the hunt. Nothing waits on the host.</p>
+            </div>
+          </div>
+        </section>
+
         <section className="section" id="protocol">
           <div className="section-head" data-reveal>
             <h2>
               No game <span className="accent">master</span>
             </h2>
-            <span className="tele">Protocol / 03</span>
+            <span className="tele">Protocol / 05</span>
           </div>
-          <div className="protocol">
+          <p className="lede" data-reveal>
+            Nobody, not even the host, can see the map while the hunt is live. Each piece of the stack does one job, and each
+            can be checked.
+          </p>
+          <ol className="pipeline">
+            {PIPELINE.map((p, i) => (
+              <li key={p.name} data-reveal data-delay={i * 100}>
+                <div className="pipe-icon">{p.icon()}</div>
+                <span className="tele ice">{p.name}</span>
+                <h3>{p.title}</h3>
+                <p>{p.desc}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="section" id="faq">
+          <div className="faq-grid">
             <div data-reveal>
-              <div className="icon"><LockIcon /></div>
-              <span className="tele ice">01 — Sealed</span>
-              <h3 style={{ marginTop: 10 }}>Every tile is locked</h3>
-              <p>Each tile is encrypted with Seal. Key servers release it only to the yeti standing on it, checked against the chain.</p>
+              <span className="tele ice">Questions / 06</span>
+              <h2 style={{ marginTop: 14 }}>
+                Before you
+                <br />
+                <span className="accent">set out</span>
+              </h2>
             </div>
-            <div data-reveal data-delay="110">
-              <div className="icon"><ChipIcon /></div>
-              <span className="tele ice">02 — Dealt in the dark</span>
-              <h3 style={{ marginTop: 10 }}>Nobody knows the map</h3>
-              <p>An attested enclave deals the mountain and signs every tile. The host never sees it, and nothing can be swapped later.</p>
+            <div className="faq">
+              {FAQ.map((f, i) => (
+                <details key={f.q} data-reveal data-delay={i * 60} open={i === 0}>
+                  <summary>{f.q}</summary>
+                  <p>{f.a}</p>
+                </details>
+              ))}
             </div>
-            <div data-reveal data-delay="220">
-              <div className="icon"><SunIcon /></div>
-              <span className="tele ice">03 — Thawed in the open</span>
-              <h3 style={{ marginTop: 10 }}>Verify every step</h3>
-              <p>The contract checks every reveal. When the hunt ends the whole mountain thaws, and anyone can audit it.</p>
+          </div>
+        </section>
+
+        <section className="section">
+          <div className="cta-band" data-reveal>
+            <Backdrop seed={41} />
+            <Clouds seed={41} count={5} fog={false} top={[2, 30]} />
+            <div className="cta-copy">
+              <Mark size={44} />
+              <h2>
+                The mountain
+                <br />
+                is <span className="accent">waiting</span>.
+              </h2>
+              <p>One relic. {TILE_COUNT} sealed tiles. Every step proven on Sui.</p>
+              <div className="cta">
+                {first ? (
+                  <a className="btn primary arrow" href={`#/hunt/${first.id}`}>Join the hunt</a>
+                ) : (
+                  <a className="btn primary arrow" href="#expeditions" onClick={go('expeditions')}>See expeditions</a>
+                )}
+                <a className="btn arrow" href="#how" onClick={go('how')}>How to play</a>
+              </div>
             </div>
           </div>
         </section>
@@ -202,6 +377,7 @@ function Expedition({ g, n, now, delay }: { g: GameState; n: number; now: number
     <li data-reveal data-delay={delay}>
       <a className="exp-card" href={`#/hunt/${g.id}`}>
         <Backdrop seed={seedOf(g.id)} yeti={false} />
+        <Clouds seed={seedOf(g.id)} count={3} fog={false} top={[4, 30]} />
         <div className="exp-top">
           <span className="tele signal">
             <span className={`blip ${isLive ? '' : 'off'}`} />
@@ -249,6 +425,19 @@ const ChipIcon = () => (
   <svg {...iconProps}>
     <rect x="6" y="6" width="12" height="12" rx="3" />
     <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
+  </svg>
+);
+const StackIcon = () => (
+  <svg {...iconProps}>
+    <path d="m12 3 9 5-9 5-9-5z" />
+    <path d="m3 13 9 5 9-5" />
+  </svg>
+);
+const PathIcon = () => (
+  <svg {...iconProps}>
+    <circle cx="6" cy="18" r="2.5" />
+    <circle cx="18" cy="6" r="2.5" />
+    <path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" />
   </svg>
 );
 const SunIcon = () => (

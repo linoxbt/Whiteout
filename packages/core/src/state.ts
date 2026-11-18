@@ -27,8 +27,19 @@ export const GameBcs = bcs.struct('Game', {
   pot: Balance,
   explorers: Table,
   finder: bcs.option(bcs.Address),
-  has_prize: bcs.bool(),
   thaw_blob: bcs.option(bcs.vector(bcs.u8())),
+  relics: bcs.u8(),
+  pot_shares: bcs.vector(bcs.u16()),
+  prizes_held: bcs.u8(),
+  prizes_deposited: bcs.u8(),
+  finders: bcs.vector(bcs.Address),
+  claimed: bcs.vector(bcs.u16()),
+  allowlist: bcs.option(bcs.Address),
+  blizzard_every_ms: bcs.u64(),
+  blizzard_ms: bcs.u64(),
+  next_blizzard_at: bcs.u64(),
+  drifts: bcs.vector(bcs.u16()),
+  drift_until: bcs.u64(),
 });
 
 const Pending = bcs.struct('Pending', { x: bcs.u8(), y: bcs.u8(), deadline_ms: bcs.u64() });
@@ -72,9 +83,26 @@ export interface GameState {
   wellFund: string;
   pot: bigint;
   explorersTable: string;
+  /** First finder (rank 1). */
   finder: string | null;
   hasPrize: boolean;
   thawBlob: string | null;
+  /** Phase 2: relics (= prizes) and the pot share of each rank, in basis points. */
+  relics: number;
+  potShares: number[];
+  prizesHeld: number;
+  prizesDeposited: number;
+  /** Finders in rank order, and the tile index (y*24+x) each claimed. */
+  finders: string[];
+  claimed: number[];
+  /** Allowlist object ID when the game is gated. */
+  allowlist: string | null;
+  blizzardEveryMs: number;
+  blizzardMs: number;
+  nextBlizzardAt: number;
+  /** Tile indices covered by drifts until `driftUntil`. */
+  drifts: number[];
+  driftUntil: number;
 }
 
 export interface ExplorerState {
@@ -127,8 +155,20 @@ export function parseGame(content: Uint8Array, objectType: string): GameState {
     pot: BigInt(g.pot.value),
     explorersTable: g.explorers.id,
     finder: g.finder ?? null,
-    hasPrize: g.has_prize,
+    hasPrize: g.prizes_held > 0,
     thawBlob: g.thaw_blob ? utf8.decode(Uint8Array.from(g.thaw_blob)) : null,
+    relics: g.relics,
+    potShares: g.pot_shares.map(Number),
+    prizesHeld: g.prizes_held,
+    prizesDeposited: g.prizes_deposited,
+    finders: g.finders,
+    claimed: g.claimed.map(Number),
+    allowlist: g.allowlist ?? null,
+    blizzardEveryMs: Number(g.blizzard_every_ms),
+    blizzardMs: Number(g.blizzard_ms),
+    nextBlizzardAt: Number(g.next_blizzard_at),
+    drifts: g.drifts.map(Number),
+    driftUntil: Number(g.drift_until),
   };
 }
 
@@ -175,6 +215,29 @@ export function isLive(g: GameState, nowMs: number): boolean {
 
 export const isActive = (e: ExplorerState) => e.status === ExplorerStatus.ACTIVE;
 
+/** Phase 2: whether a drift covers (x, y) at `nowMs` (mirrors game::drift_at). */
+export function driftAt(g: GameState, x: number, y: number, nowMs: number): boolean {
+  return nowMs < g.driftUntil && g.drifts.includes(tileIndex(x, y));
+}
+
+/** Phase 2: a blizzard can be started now (mirrors game::blizzard_internal's checks). */
+export function blizzardDue(g: GameState, nowMs: number): boolean {
+  return g.status === GameStatus.OPEN && nowMs < g.endsAt && g.blizzardEveryMs > 0 && nowMs >= g.nextBlizzardAt;
+}
+
+/** Phase 2: the relic at (x, y) was already claimed, so it is plain ground. */
+export function relicClaimed(g: GameState, x: number, y: number): boolean {
+  return g.claimed.includes(tileIndex(x, y));
+}
+
+/** Phase 2: the pot share the next finder would take now (mirrors game::pot_share). */
+export function nextPotShare(g: GameState): bigint {
+  const i = g.finders.length;
+  if (i >= g.relics) return 0n;
+  const rest = g.potShares.slice(i).reduce((a, b) => a + b, 0);
+  return rest === 0 ? 0n : (g.pot * BigInt(g.potShares[i]!)) / BigInt(rest);
+}
+
 // === Events ===
 
 const Id = bcs.Address;
@@ -189,8 +252,19 @@ export const EventBcs = {
     duration_ms: bcs.u64(),
     resolve_window_ms: bcs.u64(),
     well_fund: bcs.Address,
+    relics: bcs.u8(),
+    pot_shares: bcs.vector(bcs.u16()),
+    blizzard_every_ms: bcs.u64(),
+    blizzard_ms: bcs.u64(),
   }),
-  PrizeDeposited: bcs.struct('PrizeDeposited', { game_id: Id, prize_id: Id, prize_type: bcs.string() }),
+  PrizeDeposited: bcs.struct('PrizeDeposited', { game_id: Id, prize_id: Id, prize_type: bcs.string(), rank: bcs.u8() }),
+  AllowlistSet: bcs.struct('AllowlistSet', { game_id: Id, list_id: Id }),
+  BlizzardStarted: bcs.struct('BlizzardStarted', {
+    game_id: Id,
+    drifts: bcs.vector(bcs.u16()),
+    until_ms: bcs.u64(),
+    next_ms: bcs.u64(),
+  }),
   LobbyCancelled: bcs.struct('LobbyCancelled', { game_id: Id }),
   GameDealt: bcs.struct('GameDealt', {
     game_id: Id,
@@ -236,10 +310,13 @@ export const EventBcs = {
     finder: bcs.Address,
     prize_id: Id,
     pot: bcs.u64(),
+    rank: bcs.u8(),
+    x: bcs.u8(),
+    y: bcs.u8(),
   }),
   GameFinalized: bcs.struct('GameFinalized', { game_id: Id, to_well: bcs.u64() }),
   StakeWithdrawn: bcs.struct('StakeWithdrawn', { game_id: Id, explorer_id: Id, amount: bcs.u64() }),
-  PrizeReclaimed: bcs.struct('PrizeReclaimed', { game_id: Id, prize_id: Id }),
+  PrizeReclaimed: bcs.struct('PrizeReclaimed', { game_id: Id, prize_id: Id, rank: bcs.u8() }),
   ThawPublished: bcs.struct('ThawPublished', { game_id: Id, blob_id: bcs.vector(bcs.u8()) }),
 } as const;
 
@@ -266,6 +343,37 @@ export function parseEvent(
     checkpoint: e.checkpoint ?? null,
   } as GameEvent;
 }
+
+// === Phase 2: allowlists (whiteout::allowlist) ===
+
+export const AllowlistBcs = bcs.struct('Allowlist', {
+  id: bcs.Address,
+  name: bcs.string(),
+  members: Table,
+  size: bcs.u64(),
+});
+
+export interface AllowlistState {
+  id: string;
+  name: string;
+  membersTable: string;
+  size: number;
+}
+
+export function parseAllowlist(content: Uint8Array): AllowlistState {
+  const l = AllowlistBcs.parse(content);
+  return { id: l.id, name: l.name, membersTable: l.members.id, size: Number(l.size) };
+}
+
+export const AllowlistEventBcs = {
+  AllowlistCreated: bcs.struct('AllowlistCreated', { list_id: Id, name: bcs.string() }),
+  AllowlistChanged: bcs.struct('AllowlistChanged', {
+    list_id: Id,
+    added: bcs.u64(),
+    removed: bcs.u64(),
+    size: bcs.u64(),
+  }),
+} as const;
 
 // === Nautilus enclave objects (vendored move/enclave) ===
 

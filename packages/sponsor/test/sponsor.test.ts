@@ -24,6 +24,11 @@ describe('sponsorship policy', () => {
     expect(checkKind(data(t), PKG)).toMatchObject({ ok: true, calls: ['game::resolve', 'game::step'] });
   });
 
+  it('sponsors Phase 2 calls: a gated join and a blizzard', () => {
+    expect(checkKind(data(tx.join(ctx, { gameId: GAME, stake: 0n, column: 4, allowlistId: '0x' + '7'.repeat(64) })), PKG).ok).toBe(true);
+    expect(checkKind(data(tx.blizzard(ctx, { gameId: GAME })), PKG).ok).toBe(true);
+  });
+
   it('allows a zero-stake join (coin::zero)', () => {
     expect(checkKind(data(tx.join(ctx, { gameId: GAME, stake: 0n, column: 4 })), PKG).ok).toBe(true);
   });

@@ -21,6 +21,14 @@ use crate::{AppState, EnclaveError};
 #[serde(deny_unknown_fields)]
 pub struct DealRequest {
     pub game_id: String,
+    /// Phase 2: relics (= prizes) for a ranked game, 1-3. The deal signature commits
+    /// to it, so a wrong count only produces a deal the contract rejects.
+    #[serde(default = "one_relic")]
+    pub relics: u8,
+}
+
+fn one_relic() -> u8 {
+    1
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +42,7 @@ pub struct DealResponse {
     pub deal_ts: u64,
     pub dealer_pk: String,
     pub ct_hash: String,
+    pub relics: u8,
     pub deal_sig: String,
     pub tiles: Vec<DealTileOut>,
 }
@@ -53,11 +62,15 @@ pub async fn deal_handler(
 ) -> Result<Json<DealResponse>, EnclaveError> {
     let started = std::time::Instant::now();
     let game_id = parse_game_id(&req.game_id)?;
+    let relics = req.relics as usize;
+    if !(1..=map::MAX_RELICS).contains(&relics) {
+        return Err(EnclaveError::GenericError("relics must be 1 to 3".into()));
+    }
     let deal_ts = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| EnclaveError::GenericError(e.to_string()))?.as_millis() as u64;
     let st = state.clone();
     // Map generation and 576 encryptions are CPU-bound: keep them off the async runtime.
     let d = tokio::task::spawn_blocking(move || -> anyhow::Result<deal::Deal> {
-        let map = map::generate(&mut OsRng).ok_or_else(|| anyhow::anyhow!("no solvable map after 1000 tries"))?;
+        let map = map::generate(&mut OsRng, relics).ok_or_else(|| anyhow::anyhow!("no solvable map after 1000 tries"))?;
         deal::deal(&st.config, &map, game_id, deal_ts, &st.eph_kp)
     })
     .await
@@ -69,6 +82,7 @@ pub async fn deal_handler(
         deal_ts: d.deal_ts,
         dealer_pk: hex::encode(&d.dealer_pk),
         ct_hash: hex::encode(&d.ct_hash),
+        relics: d.relics,
         deal_sig: hex::encode(&d.deal_sig),
         tiles: d.tiles.iter().map(|(x, y, ct)| DealTileOut { id: format!("t-{x}-{y}"), ct: b64.encode(ct) }).collect(),
     };

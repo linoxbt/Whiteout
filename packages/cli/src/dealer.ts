@@ -28,6 +28,8 @@ export interface DealFile {
   dealerPk: string;
   ctHash: string;
   dealSig: string;
+  /** Relics on the map (Phase 2); the deal signature commits to it. Absent means 1. */
+  relics?: number;
   enclaveId?: string;
   tiles: Array<{ id: string; ct: string }>;
 }
@@ -40,6 +42,7 @@ export function toDealFile(out: DealOutput, kind: DealFile['kind'], enclaveId?: 
     dealerPk: toHex(out.dealerPk),
     ctHash: toHex(out.ctHash),
     dealSig: toHex(out.dealSig),
+    relics: out.relics,
     ...(enclaveId ? { enclaveId } : {}),
     tiles: out.tiles.map((t) => ({ id: t.id, ct: toBase64(t.ct) })),
   };
@@ -58,6 +61,7 @@ interface EnclaveDealResponse {
   dealer_pk: string;
   ct_hash: string;
   deal_sig: string;
+  relics?: number;
   tiles: Array<{ id: string; ct: string }>;
 }
 
@@ -65,11 +69,17 @@ interface EnclaveDealResponse {
  * Requests a deal from the attested enclave and checks everything the chain will
  * check, plus what it cannot: every ciphertext names exactly the pinned key servers.
  */
-export async function requestEnclaveDeal(env: Env, gameId: string, url: string, enclaveId: string): Promise<DealFile> {
+export async function requestEnclaveDeal(
+  env: Env,
+  gameId: string,
+  url: string,
+  enclaveId: string,
+  relics = 1,
+): Promise<DealFile> {
   const res = await fetch(`${url.replace(/\/$/, '')}/deal`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ game_id: gameId }),
+    body: JSON.stringify({ game_id: gameId, relics }),
   });
   if (!res.ok) throw new Error(`enclave /deal ${res.status}: ${await res.text()}`);
   const body = (await res.json()) as EnclaveDealResponse;
@@ -87,6 +97,7 @@ export async function requestEnclaveDeal(env: Env, gameId: string, url: string, 
     dealerPk: toHex(dealerPk),
     ctHash: body.ct_hash.replace(/^0x/, ''),
     dealSig: body.deal_sig.replace(/^0x/, ''),
+    relics: body.relics ?? relics,
     enclaveId,
     tiles: body.tiles,
   };
@@ -103,7 +114,7 @@ export function checkDealFile(env: Env, d: DealFile): void {
   });
   const ctHash = fromHex(d.ctHash);
   if (!checkCiphertexts(tiles.map((t) => t.ct), ctHash)) throw new Error('ct_hash does not match the ciphertexts');
-  if (!verifyDealSig(fromHex(d.dealerPk), d.gameId, BigInt(d.dealTs), ctHash, fromHex(d.dealSig))) {
+  if (!verifyDealSig(fromHex(d.dealerPk), d.gameId, BigInt(d.dealTs), ctHash, fromHex(d.dealSig), d.relics ?? 1)) {
     throw new Error('deal signature does not verify');
   }
   const pinned = new Set(env.cfg.sealServers.map((s) => s.objectId.toLowerCase()));
@@ -124,11 +135,11 @@ export function checkDealFile(env: Env, d: DealFile): void {
  * Ceremony deal (MD5): the host generates and signs the map here, so the host can
  * know it. Only allowed for zero-stake games, which Move enforces.
  */
-export async function ceremonyDeal(env: Env, gameId: string): Promise<DealFile> {
+export async function ceremonyDeal(env: Env, gameId: string, relics = 1): Promise<DealFile> {
   const secretKey = ed25519.utils.randomSecretKey();
   const seal = makeSealClient(env.client, env.cfg);
   const out = await deal({
-    map: generateMap(),
+    map: generateMap(undefined, relics),
     gameId,
     dealTs: BigInt(Date.now()),
     secretKey,

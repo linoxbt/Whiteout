@@ -1,7 +1,18 @@
 /** Chain reads: Game, Explorer, events and the public trail. Sui is the only source of truth. */
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { NetworkConfig } from './config.js';
-import { parseEvent, parseExplorer, parseGame, type ExplorerState, type GameEvent, type GameState } from './state.js';
+import { bcs } from '@mysten/sui/bcs';
+import {
+  AllowlistEventBcs,
+  parseAllowlist,
+  parseEvent,
+  parseExplorer,
+  parseGame,
+  type AllowlistState,
+  type ExplorerState,
+  type GameEvent,
+  type GameState,
+} from './state.js';
 
 export type Client = SuiGrpcClient;
 
@@ -85,6 +96,39 @@ export async function listGames(client: Client, packageId: string, limit = 50): 
   return found.reverse().slice(0, limit);
 }
 
+// === Phase 2: allowlists ===
+
+export async function getAllowlist(client: Client, listId: string): Promise<AllowlistState> {
+  const { object } = await client.core.getObject({ objectId: listId, include: { content: true } });
+  return parseAllowlist(object.content);
+}
+
+/** Whether `address` is on the list (a lookup in the list's members table). */
+export async function onAllowlist(client: Client, list: AllowlistState, address: string): Promise<boolean> {
+  try {
+    await client.core.getDynamicField({
+      parentId: list.membersTable,
+      name: { type: 'address', bcs: bcs.Address.serialize(address).toBytes() },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Allowlists created by this package, newest first. */
+export async function listAllowlists(client: Client, packageId: string, limit = 50): Promise<Array<{ id: string; name: string }>> {
+  const res = await client.core.listEvents({
+    filter: { eventType: `${packageId}::allowlist::AllowlistCreated` },
+    limit,
+    order: 'descending',
+  });
+  return res.events.map((e) => {
+    const d = AllowlistEventBcs.AllowlistCreated.parse(e.bcs);
+    return { id: d.list_id, name: d.name };
+  });
+}
+
 export function sameId(a: string, b: string): boolean {
   const n = (s: string) => s.toLowerCase().replace(/^0x/, '').padStart(64, '0');
   return n(a) === n(b);
@@ -98,20 +142,42 @@ export interface Trail {
   >;
   resolved: Map<string, number>; // "x,y" -> kind
   frozenAt: Array<{ explorerId: string; toWell: bigint; toPot: bigint; overdue: boolean }>;
+  /** First finder (rank 1). */
   finder: string | null;
+  /** Prize type of rank 1 (single-relic games). */
   prizeType: string | null;
+  /** Phase 2: prize type by rank, finders in rank order, and blizzards seen. */
+  prizeTypes: Map<number, string>;
+  finders: Array<{ rank: number; finder: string; explorerId: string; pot: bigint; x: number; y: number }>;
+  blizzards: number;
   dealt: { dealerKind: number; enclaveId: string | null; openAt: number; endsAt: number } | null;
 }
 
 export function emptyTrail(): Trail {
-  return { explorers: new Map(), resolved: new Map(), frozenAt: [], finder: null, prizeType: null, dealt: null };
+  return {
+    explorers: new Map(),
+    resolved: new Map(),
+    frozenAt: [],
+    finder: null,
+    prizeType: null,
+    prizeTypes: new Map(),
+    finders: [],
+    blizzards: 0,
+    dealt: null,
+  };
 }
 
 export function applyEvents(trail: Trail, events: GameEvent[]): Trail {
   for (const ev of events) {
     switch (ev.name) {
-      case 'PrizeDeposited':
-        trail.prizeType = ev.data.prize_type.includes('::') ? `0x${ev.data.prize_type.replace(/^0x/, '')}` : ev.data.prize_type;
+      case 'PrizeDeposited': {
+        const t = ev.data.prize_type.includes('::') ? `0x${ev.data.prize_type.replace(/^0x/, '')}` : ev.data.prize_type;
+        trail.prizeTypes.set(ev.data.rank, t);
+        if (ev.data.rank === 1) trail.prizeType = t;
+        break;
+      }
+      case 'BlizzardStarted':
+        trail.blizzards += 1;
         break;
       case 'GameDealt':
         trail.dealt = {
@@ -152,7 +218,15 @@ export function applyEvents(trail: Trail, events: GameEvent[]): Trail {
         break;
       }
       case 'RelicClaimed': {
-        trail.finder = ev.data.finder;
+        if (ev.data.rank === 1) trail.finder = ev.data.finder;
+        trail.finders.push({
+          rank: ev.data.rank,
+          finder: ev.data.finder,
+          explorerId: ev.data.explorer_id,
+          pot: BigInt(ev.data.pot),
+          x: ev.data.x,
+          y: ev.data.y,
+        });
         const e = trail.explorers.get(ev.data.explorer_id);
         if (e) e.finder = true;
         break;

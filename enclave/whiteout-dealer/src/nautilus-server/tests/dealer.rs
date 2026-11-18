@@ -38,19 +38,21 @@ fn fixture_key() -> Ed25519KeyPair {
 #[test]
 fn maps_are_valid_and_solvable() {
     for seed in 0..300u64 {
-        let map = generate(&mut StdRng::seed_from_u64(seed)).expect("solvable");
-        assert!(validate(&map).is_empty(), "seed {seed}: {:?}", validate(&map));
+        let map = generate(&mut StdRng::seed_from_u64(seed), 1).expect("solvable");
+        assert!(validate(&map, 1).is_empty(), "seed {seed}: {:?}", validate(&map, 1));
     }
 }
 
 #[test]
 fn clues_follow_the_spec() {
-    assert_eq!(warmth(0, 0, (0, 2)), 5);
-    assert_eq!(warmth(0, 0, (0, 4)), 4);
-    assert_eq!(warmth(0, 0, (0, 7)), 3);
-    assert_eq!(warmth(0, 0, (0, 11)), 2);
-    assert_eq!(warmth(0, 0, (0, 16)), 1);
-    assert_eq!(warmth(0, 0, (0, 17)), 0);
+    assert_eq!(warmth(0, 0, &[(0, 2)]), 5);
+    assert_eq!(warmth(0, 0, &[(0, 4)]), 4);
+    assert_eq!(warmth(0, 0, &[(0, 7)]), 3);
+    assert_eq!(warmth(0, 0, &[(0, 11)]), 2);
+    assert_eq!(warmth(0, 0, &[(0, 16)]), 1);
+    assert_eq!(warmth(0, 0, &[(0, 17)]), 0);
+    // Phase 2: the nearest relic sets the warmth.
+    assert_eq!(warmth(0, 0, &[(0, 20), (1, 2)]), 5);
     let mut map = [SNOW; TILES];
     map[idx(1, 1)] = CREVASSE;
     map[idx(2, 2)] = CREVASSE;
@@ -75,7 +77,10 @@ fn kind_messages_match_the_move_fixtures() {
         assert_eq!(sig, sigs[i * 64..i * 64 + 64], "tile ({x}, {y})");
     }
     let ct_hash = hex_const(&src, "CT_HASH");
-    assert_eq!(sign(&kp, &deal_message(game, deal_ts, &ct_hash)), hex_const(&src, "DEAL_SIG"));
+    assert_eq!(sign(&kp, &deal_message(game, deal_ts, &ct_hash, 1)), hex_const(&src, "DEAL_SIG"));
+    // Phase 2: the deal signature commits to the relic count.
+    assert_eq!(sign(&kp, &deal_message(game, deal_ts, &ct_hash, 2)), hex_const(&src, "DEAL_SIG_2_RELICS"));
+    assert_eq!(sign(&kp, &deal_message(game, deal_ts, &ct_hash, 3)), hex_const(&src, "DEAL_SIG_3_RELICS"));
 }
 
 fn test_servers(n: usize) -> (DealerConfig, Vec<(sui_sdk_types::Address, ibe::MasterKey)>) {
@@ -105,14 +110,14 @@ fn a_deal_encrypts_every_tile_to_the_pinned_servers_and_decrypts() {
     let (cfg, keys) = test_servers(3);
     let kp = fixture_key();
     let game = [0xab; 32];
-    let map = generate(&mut StdRng::seed_from_u64(1)).unwrap();
+    let map = generate(&mut StdRng::seed_from_u64(1), 1).unwrap();
     let d = deal(&cfg, &map, game, 42, &kp).unwrap();
     assert_eq!(d.tiles.len(), TILES);
 
     let cts: Vec<Vec<u8>> = d.tiles.iter().map(|t| t.2.clone()).collect();
     assert_eq!(ct_hash(&cts), d.ct_hash);
     let pk = Ed25519PublicKey::from_bytes(&d.dealer_pk).unwrap();
-    pk.verify(&deal_message(game, 42, &d.ct_hash), &Ed25519Signature::from_bytes(&d.deal_sig).unwrap()).unwrap();
+    pk.verify(&deal_message(game, 42, &d.ct_hash, d.relics), &Ed25519Signature::from_bytes(&d.deal_sig).unwrap()).unwrap();
 
     // Every ciphertext has the same size (R8) and names exactly the pinned servers.
     let sizes: std::collections::HashSet<usize> = cts.iter().map(|c| c.len()).collect();
@@ -147,7 +152,7 @@ fn a_deal_encrypts_every_tile_to_the_pinned_servers_and_decrypts() {
 #[test]
 fn one_key_server_alone_cannot_decrypt() {
     let (cfg, keys) = test_servers(3);
-    let d = deal(&cfg, &generate(&mut StdRng::seed_from_u64(2)).unwrap(), [1; 32], 1, &fixture_key()).unwrap();
+    let d = deal(&cfg, &generate(&mut StdRng::seed_from_u64(2), 1).unwrap(), [1; 32], 1, &fixture_key()).unwrap();
     let obj: EncryptedObject = bcs::from_bytes(&d.tiles[0].2).unwrap();
     let full_id = create_full_id(&cfg.package_id.into_inner(), &obj.id);
     let usks: HashMap<_, _> = keys.iter().take(1).map(|(id, sk)| (*id, ibe::extract(sk, &full_id))).collect();
@@ -158,7 +163,7 @@ fn one_key_server_alone_cannot_decrypt() {
 fn every_plaintext_is_exactly_160_bytes() {
     let kp = fixture_key();
     for seed in 0..20 {
-        let map = generate(&mut StdRng::seed_from_u64(seed)).unwrap();
+        let map = generate(&mut StdRng::seed_from_u64(seed), 1).unwrap();
         for t in sign_tiles(&map, [seed as u8; 32], seed, &kp) {
             assert_eq!(t.plaintext.len(), TILE_PLAINTEXT_LEN);
         }
@@ -182,4 +187,15 @@ fn the_pinned_config_parses() {
     let cfg = DealerConfig::pinned().unwrap();
     assert!(!cfg.servers.is_empty());
     assert!(cfg.threshold as usize <= cfg.servers.len());
+}
+
+#[test]
+fn ranked_maps_place_relics_apart_and_reachable() {
+    for relics in [2usize, 3] {
+        for seed in 0..60u64 {
+            let map = generate(&mut StdRng::seed_from_u64(seed), relics).expect("solvable");
+            assert!(validate(&map, relics).is_empty(), "relics {relics} seed {seed}: {:?}", validate(&map, relics));
+        }
+    }
+    assert!(generate(&mut StdRng::seed_from_u64(1), 4).is_none());
 }

@@ -25,6 +25,10 @@ import {
   hazardsAt,
   identityHex,
   isEnded,
+  blizzardDue,
+  driftAt,
+  findRelics,
+  nextPotShare,
   kindMessage,
   parseAbort,
   parseExplorer,
@@ -58,6 +62,8 @@ const F = {
   dealerPk: hexConst('DEALER_PK'),
   ctHash: hexConst('CT_HASH'),
   dealSig: hexConst('DEAL_SIG'),
+  dealSig2: hexConst('DEAL_SIG_2_RELICS'),
+  dealSig3: hexConst('DEAL_SIG_3_RELICS'),
   kinds: hexConst('KINDS'),
   sigs: hexConst('SIGS'),
 };
@@ -75,6 +81,13 @@ describe('message formats match the Move fixtures', () => {
   it('verifies the deal signature and rejects it for another game', () => {
     expect(verifyDealSig(F.dealerPk, F.gameId, F.dealTs, F.ctHash, F.dealSig)).toBe(true);
     expect(verifyDealSig(F.dealerPk, F.otherGameId, F.dealTs, F.ctHash, F.dealSig)).toBe(false);
+  });
+
+  it('the deal signature commits to the relic count (Phase 2)', () => {
+    expect(verifyDealSig(F.dealerPk, F.gameId, F.dealTs, F.ctHash, F.dealSig2, 2)).toBe(true);
+    expect(verifyDealSig(F.dealerPk, F.gameId, F.dealTs, F.ctHash, F.dealSig3, 3)).toBe(true);
+    expect(verifyDealSig(F.dealerPk, F.gameId, F.dealTs, F.ctHash, F.dealSig2, 1)).toBe(false);
+    expect(verifyDealSig(F.dealerPk, F.gameId, F.dealTs, F.ctHash, F.dealSig, 2)).toBe(false);
   });
 
   it('derives the fixture dealer key from the documented seed', () => {
@@ -140,6 +153,22 @@ describe('map generation', () => {
     map[tileIndex(2, 2)] = TileKind.CREVASSE;
     expect(hazardsAt(map, 1, 2)).toBe(2);
     expect(hazardsAt(map, 1, 1)).toBe(1); // a crevasse does not count itself
+  });
+
+  it('places 2 and 3 relics far apart, all reachable (Phase 2)', () => {
+    for (const relics of [2, 3]) {
+      for (let seed = 1; seed <= 100; seed++) {
+        const map = generateMap(seededRng(seed), relics);
+        expect(validateMap(map, relics), `relics ${relics} seed ${seed}`).toEqual([]);
+        expect(findRelics(map)).toHaveLength(relics);
+      }
+    }
+    expect(() => generateMap(seededRng(1), 4)).toThrow();
+  });
+
+  it('warmth points at the nearest relic', () => {
+    expect(warmthAt(0, 0, [[0, 20], [1, 2]])).toBe(5);
+    expect(warmthAt(23, 23, [[0, 0], [23, 18]])).toBe(3);
   });
 
   it('flags an unsolvable map', () => {
@@ -225,8 +254,19 @@ describe('object layouts', () => {
       pot: { value: 5n },
       explorers: { id, size: 2n },
       finder: null,
-      has_prize: true,
       thaw_blob: null,
+      relics: 2,
+      pot_shares: [7000, 3000],
+      prizes_held: 2,
+      prizes_deposited: 2,
+      finders: [],
+      claimed: [],
+      allowlist: null,
+      blizzard_every_ms: 600_000n,
+      blizzard_ms: 120_000n,
+      next_blizzard_at: 601_000n,
+      drifts: [tileIndex(4, 4)],
+      drift_until: 2000n,
     }).toBytes();
     const g = parseGame(game, '0x1::game::Game<0x2::sui::SUI>');
     expect(g.coinType).toBe('0x2::sui::SUI');
@@ -234,6 +274,14 @@ describe('object layouts', () => {
     expect(g.pot).toBe(5n);
     expect(isEnded(g, 7_200_999)).toBe(false);
     expect(isEnded(g, 7_201_000)).toBe(true);
+    // Phase 2 fields.
+    expect(g.relics).toBe(2);
+    expect(g.hasPrize).toBe(true);
+    expect(nextPotShare(g)).toBe(3n); // 5 * 7000 / 10000, rounded down
+    expect(driftAt(g, 4, 4, 1999)).toBe(true);
+    expect(driftAt(g, 4, 4, 2000)).toBe(false);
+    expect(blizzardDue(g, 600_999)).toBe(false);
+    expect(blizzardDue(g, 601_000)).toBe(true);
 
     const visited = new Uint8Array(72);
     visited[tileIndex(3, 1) >> 3] = 1 << (tileIndex(3, 1) & 7);
@@ -272,6 +320,28 @@ describe('transactions', () => {
     expect(calls(tx.resolveTile(ctx, { ...base, kind: TileKind.CREVASSE, ropes: 1, huntLive: true }))).toEqual(['game::resolve']);
     expect(calls(tx.resolveTile(ctx, { ...base, kind: TileKind.RELIC, ropes: 0, huntLive: true }))).toEqual(['game::claim_relic']);
     expect(calls(tx.resolveTile(ctx, { ...base, kind: TileKind.RELIC, ropes: 0, huntLive: false }))).toEqual(['game::resolve']);
+    // Phase 2: a relic someone already claimed is plain ground.
+    expect(calls(tx.resolveTile(ctx, { ...base, kind: TileKind.RELIC, ropes: 0, huntLive: true, relicClaimed: true }))).toEqual(['game::resolve']);
+    expect(tx.canBatchWithStep(TileKind.RELIC, 0, true, true)).toBe(true);
+  });
+
+  it('phase 2 calls', () => {
+    expect(calls(tx.join(ctx, { gameId: '0x5', stake: 0n, column: 3, allowlistId: '0x7' }))).toEqual(['coin::zero', 'game::join_gated']);
+    expect(calls(tx.blizzard(ctx, { gameId: '0x5' }))).toEqual(['game::blizzard']);
+    expect(
+      calls(
+        tx.createRankedLobby(ctx, {
+          entryStake: 0n, maxPlayers: 8, durationMs: 3_600_000, resolveWindowMs: 300_000, wellFund: '0x9', host: '0x9',
+          relics: 3, potShares: [6000, 2500, 1500], blizzardEveryMs: 600_000, blizzardMs: 120_000,
+        }),
+      ),
+    ).toEqual(['game::create_ranked_lobby']);
+    const add = Array.from({ length: 1500 }, (_, i) => '0x' + (i + 1).toString(16));
+    expect(calls(tx.editAllowlist(ctx, { listId: '0x7', capId: '0x8', add, remove: ['0x1'] }))).toEqual([
+      'allowlist::add',
+      'allowlist::add',
+      'allowlist::remove',
+    ]);
   });
 
   it('a resolve and the next step can share one transaction', () => {
@@ -300,6 +370,7 @@ describe('errors', () => {
   it('maps abort codes', () => {
     expect(parseAbort({ MoveAbort: { abortCode: '10' } })?.name).toBe('ECooldown');
     expect(parseAbort({ MoveAbort: { abortCode: '23', location: { package: '0x1' } } }, '0x2')).toBeNull();
-    expect(Object.keys(ABORTS)).toHaveLength(23);
+    expect(Object.keys(ABORTS)).toHaveLength(30);
+    expect(parseAbort({ MoveAbort: { abortCode: '27' } })?.name).toBe('EDrift');
   });
 });

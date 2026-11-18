@@ -36,6 +36,23 @@ export const TILE_KIND_NAMES: Record<number, string> = {
 export const MAP_MIX = { relic: 1, crevasses: 70, goggles: 12, ropes: 13 } as const;
 export const RELIC_MIN_ROW = 12;
 
+/** Phase 2: ranked relics. Relics sit at least this far apart (Chebyshev). */
+export const MAX_RELICS = 3;
+export const RELIC_SEPARATION = 6;
+export const BPS = 10_000;
+
+/** Phase 2: blizzard bounds, mirrored from game.move. */
+export const Blizzard = {
+  MAX_DRIFTS: 12,
+  MAX_DRIFTS_PER_ROW: 8,
+  MIN_EVERY_MS: 600_000,
+  MIN_MS: 60_000,
+  MAX_MS: 900_000,
+} as const;
+
+/** The shared Random object. */
+export const RANDOM_ID = '0x8';
+
 export const GameStatus = {
   LOBBY: 0,
   OPEN: 1,

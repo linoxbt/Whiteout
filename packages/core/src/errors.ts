@@ -32,6 +32,13 @@ export const ABORTS: Record<number, AbortInfo> = {
   21: { code: 21, name: 'ENoAccess', message: 'That tile is still in the fog.', action: 'none' },
   22: { code: 22, name: 'ENoPending', message: 'Nothing to reveal here.', action: 'refresh' },
   23: { code: 23, name: 'EUseFatal', message: 'A crevasse, and no rope.', action: 'resolve_first' },
+  24: { code: 24, name: 'EGated', message: 'This hunt is for allowlisted holders only.', action: 'refresh' },
+  25: { code: 25, name: 'ENotAllowed', message: 'Your address is not on this hunt\'s allowlist.', action: 'none' },
+  26: { code: 26, name: 'ERelicTaken', message: 'Someone already claimed this relic. Keep looking: another one is out there.', action: 'refresh' },
+  27: { code: 27, name: 'EDrift', message: 'A snowdrift blocks that way until the blizzard passes.', action: 'wait' },
+  28: { code: 28, name: 'ENoBlizzard', message: 'No blizzard is due yet.', action: 'none' },
+  29: { code: 29, name: 'ENotAdmin', message: 'That allowlist pass belongs to another list.', action: 'none' },
+  30: { code: 30, name: 'EBatchTooLarge', message: 'Add at most 1 000 addresses per call.', action: 'none' },
 };
 
 export class WhiteoutAbort extends Error {
@@ -56,7 +63,7 @@ export function parseAbort(err: unknown, packageId?: string): AbortInfo | null {
     return ABORTS[Number(e.MoveAbort.abortCode)] ?? null;
   }
   const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
-  const m = msg?.match(/MoveAbort.*?(?:game|policy|tiles).*?,\s*(\d+)\)/) ?? msg?.match(/abort(?:Code|_code)?\D+(\d+)/i);
+  const m = msg?.match(/MoveAbort.*?(?:game|policy|tiles|allowlist).*?,\s*(\d+)\)/) ?? msg?.match(/abort(?:Code|_code)?\D+(\d+)/i);
   return m ? (ABORTS[Number(m[1])] ?? null) : null;
 }
 

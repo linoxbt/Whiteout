@@ -10,7 +10,7 @@ use seal_crypto::{seal_encrypt, EncryptionInput, IBEPublicKeys};
 use serde::Serialize;
 
 use super::config::DealerConfig;
-use super::map::{find_relic, hazards, idx, warmth, Map, GRID, TILES};
+use super::map::{find_relics, hazards, idx, warmth, Map, GRID, TILES};
 
 pub const INTENT_DEAL: u8 = 1;
 pub const INTENT_TILE_KIND: u8 = 2;
@@ -47,6 +47,7 @@ pub struct DealPayload {
     pub game_id: [u8; 32],
     pub grid: u8,
     pub tiles: u16,
+    pub relics: u8,
     pub ct_hash: Vec<u8>,
 }
 
@@ -72,8 +73,10 @@ pub fn clue_message(game_id: [u8; 32], deal_ts: u64, x: u8, y: u8, kind: u8, war
     intent_bytes(INTENT_TILE_CLUE, deal_ts, TileClue { game_id, x, y, kind, warmth, hazards })
 }
 
-pub fn deal_message(game_id: [u8; 32], deal_ts: u64, ct_hash: &[u8]) -> Vec<u8> {
-    intent_bytes(INTENT_DEAL, deal_ts, DealPayload { game_id, grid: GRID as u8, tiles: TILES as u16, ct_hash: ct_hash.to_vec() })
+/// The deal signature commits to the ciphertexts and to the relic count, which the
+/// contract checks against the game's number of prizes.
+pub fn deal_message(game_id: [u8; 32], deal_ts: u64, ct_hash: &[u8], relics: u8) -> Vec<u8> {
+    intent_bytes(INTENT_DEAL, deal_ts, DealPayload { game_id, grid: GRID as u8, tiles: TILES as u16, relics, ct_hash: ct_hash.to_vec() })
 }
 
 pub fn sign(kp: &Ed25519KeyPair, msg: &[u8]) -> Vec<u8> {
@@ -89,12 +92,12 @@ pub struct SignedTile {
 
 /// Builds the 576 padded, signed plaintexts in row-major order (y, then x).
 pub fn sign_tiles(map: &Map, game_id: [u8; 32], deal_ts: u64, kp: &Ed25519KeyPair) -> Vec<SignedTile> {
-    let relic = find_relic(map);
+    let relics = find_relics(map);
     let mut out = Vec::with_capacity(TILES);
     for y in 0..GRID {
         for x in 0..GRID {
             let kind = map[idx(x, y)];
-            let w = warmth(x, y, relic);
+            let w = warmth(x, y, &relics);
             let h = hazards(map, x, y);
             let (xb, yb) = (x as u8, y as u8);
             let plain = TilePlain {
@@ -150,6 +153,7 @@ pub struct Deal {
     pub deal_ts: u64,
     pub dealer_pk: Vec<u8>,
     pub ct_hash: Vec<u8>,
+    pub relics: u8,
     pub deal_sig: Vec<u8>,
     /// (x, y, ciphertext) in row-major order.
     pub tiles: Vec<(u8, u8, Vec<u8>)>,
@@ -163,11 +167,13 @@ pub fn deal(cfg: &DealerConfig, map: &Map, game_id: [u8; 32], deal_ts: u64, kp: 
     }
     let cts: Vec<Vec<u8>> = tiles.iter().map(|(_, _, ct)| ct.clone()).collect();
     let hash = ct_hash(&cts);
+    let relics = find_relics(map).len() as u8;
     Ok(Deal {
         deal_ts,
         dealer_pk: kp.public().as_bytes().to_vec(),
-        deal_sig: sign(kp, &deal_message(game_id, deal_ts, &hash)),
+        deal_sig: sign(kp, &deal_message(game_id, deal_ts, &hash, relics)),
         ct_hash: hash,
+        relics,
         tiles,
     })
 }

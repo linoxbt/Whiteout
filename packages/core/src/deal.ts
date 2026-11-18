@@ -8,7 +8,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { concatBytes, u32le, bytesEqual } from './bytes.js';
 import { GRID, TILE_COUNT, TileKind } from './constants.js';
 import { identityHex, quiltPatchId, tileIndex } from './identity.js';
-import { findRelic, hazardsAt, warmthAt, type MapKinds } from './map.js';
+import { findRelic, findRelics, hazardsAt, warmthAt, type MapKinds } from './map.js';
 import {
   clueMessage,
   dealMessage,
@@ -34,6 +34,8 @@ export interface DealOutput {
   dealTs: bigint;
   dealerPk: Uint8Array;
   ctHash: Uint8Array;
+  /** Relics on the map; the deal signature commits to this count. */
+  relics: number;
   dealSig: Uint8Array;
   tiles: DealTile[]; // row-major: y, then x
 }
@@ -52,12 +54,12 @@ export function ctHash(ciphertexts: Uint8Array[]): Uint8Array {
 
 /** Builds and signs the 576 plaintext tiles of a map. */
 export function signTiles(map: MapKinds, gameId: string, dealTs: bigint, secretKey: Uint8Array): Tile[] {
-  const relic = findRelic(map);
+  const relics = findRelics(map);
   const tiles: Tile[] = [];
   for (let y = 0; y < GRID; y++)
     for (let x = 0; x < GRID; x++) {
       const kind = map[tileIndex(x, y)]!;
-      const warmth = warmthAt(x, y, relic);
+      const warmth = warmthAt(x, y, relics);
       const hazards = hazardsAt(map, x, y);
       tiles.push({
         x,
@@ -95,12 +97,14 @@ export async function deal(opts: {
   }
   await Promise.all(Array.from({ length: limit }, worker));
   const hash = ctHash(cts);
+  const relics = findRelics(map).length;
   return {
     gameId,
     dealTs,
     dealerPk: ed25519.getPublicKey(secretKey),
     ctHash: hash,
-    dealSig: ed25519.sign(dealMessage(gameId, dealTs, hash), secretKey),
+    relics,
+    dealSig: ed25519.sign(dealMessage(gameId, dealTs, hash, relics), secretKey),
     tiles: tiles.map((t, i) => ({ id: quiltPatchId(t.x, t.y), x: t.x, y: t.y, ct: cts[i]! })),
   };
 }
@@ -115,7 +119,9 @@ export interface ThawCheck {
   ok: boolean;
   problems: string[];
   map?: MapKinds;
+  /** First relic (single-relic games). */
   relic?: [number, number];
+  relics?: Array<[number, number]>;
 }
 
 /** Verifies every tile of a thaw file against the dealer key (AC27). */
@@ -142,7 +148,7 @@ export function verifyThaw(
   }
   if (map.includes(255)) problems.push('thaw file is missing tiles');
   const ok = problems.length === 0;
-  return ok ? { ok, problems, map, relic: findRelic(map) } : { ok, problems };
+  return ok ? { ok, problems, map, relic: findRelic(map), relics: findRelics(map) } : { ok, problems };
 }
 
 export function thawFile(gameId: string, tiles: Tile[]): ThawFile {

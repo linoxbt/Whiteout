@@ -28,6 +28,7 @@ export const DealPayload = bcs.struct('DealPayload', {
   game_id: bcs.Address,
   grid: bcs.u8(),
   tiles: bcs.u16(),
+  relics: bcs.u8(),
   ct_hash: bcs.vector(bcs.u8()),
 });
 
@@ -57,11 +58,13 @@ export function clueMessage(
   return intentMessage(TileCluePayload)(Intent.TILE_CLUE, dealTs, { game_id: gameId, ...clue });
 }
 
-export function dealMessage(gameId: string, dealTs: bigint | number, ctHash: Uint8Array) {
+/** The deal signature commits to the ciphertexts and the number of relics (= prizes). */
+export function dealMessage(gameId: string, dealTs: bigint | number, ctHash: Uint8Array, relics = 1) {
   return intentMessage(DealPayload)(Intent.DEAL, dealTs, {
     game_id: gameId,
     grid: GRID,
     tiles: TILE_COUNT,
+    relics,
     ct_hash: Array.from(ctHash),
   });
 }
@@ -143,9 +146,10 @@ export function verifyDealSig(
   dealTs: bigint | number,
   ctHash: Uint8Array,
   sig: Uint8Array,
+  relics = 1,
 ): boolean {
   try {
-    return ed25519.verify(sig, dealMessage(gameId, dealTs, ctHash), dealerPk);
+    return ed25519.verify(sig, dealMessage(gameId, dealTs, ctHash, relics), dealerPk);
   } catch {
     return false;
   }

@@ -1,6 +1,6 @@
 /** Map generation and clues (spec sections 8 and 12). Shared by the ceremony dealer
  * in the host CLI and the tests; the Rust enclave implements the same rules. */
-import { BASE_ROW, GRID, MAP_MIX, RELIC_MIN_ROW, TILE_COUNT, TileKind } from './constants.js';
+import { BASE_ROW, GRID, MAP_MIX, MAX_RELICS, RELIC_MIN_ROW, RELIC_SEPARATION, TILE_COUNT, TileKind } from './constants.js';
 import { chebyshev, onGrid, tileIndex } from './identity.js';
 
 /** Kinds in row-major order: index y*24+x. */
@@ -32,8 +32,10 @@ export function seededRng(seed: number): Rng {
   };
 }
 
-export function warmthAt(x: number, y: number, relic: [number, number]): number {
-  const d = chebyshev(x, y, relic[0], relic[1]);
+/** Warmth 0-5 from the distance to the nearest relic (one relic, or several). */
+export function warmthAt(x: number, y: number, relic: [number, number] | Array<[number, number]>): number {
+  const list = (typeof relic[0] === 'number' ? [relic] : relic) as Array<[number, number]>;
+  const d = Math.min(...list.map(([rx, ry]) => chebyshev(x, y, rx, ry)));
   if (d <= 2) return 5;
   if (d <= 4) return 4;
   if (d <= 7) return 3;
@@ -60,20 +62,27 @@ export function findRelic(map: MapKinds): [number, number] {
   return [i % GRID, Math.floor(i / GRID)];
 }
 
-/** True when a crevasse-free 4-way path joins row 0 to the relic (R20). */
+/** Every relic on the map, in row-major order. */
+export function findRelics(map: MapKinds): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  map.forEach((k, i) => k === TileKind.RELIC && out.push([i % GRID, Math.floor(i / GRID)]));
+  if (!out.length) throw new Error('map has no relic');
+  return out;
+}
+
+/** True when a crevasse-free 4-way path joins row 0 to every relic (R20). */
 export function relicReachable(map: MapKinds): boolean {
-  const [rx, ry] = findRelic(map);
+  const relics = findRelics(map).map(([x, y]) => tileIndex(x, y));
   const seen = new Uint8Array(TILE_COUNT);
   const queue: number[] = [];
   for (let x = 0; x < GRID; x++) {
     seen[tileIndex(x, BASE_ROW)] = 1;
     queue.push(tileIndex(x, BASE_ROW));
   }
-  while (queue.length) {
-    const i = queue.shift()!;
+  for (let head = 0; head < queue.length; head++) {
+    const i = queue[head]!;
     const x = i % GRID;
     const y = Math.floor(i / GRID);
-    if (x === rx && y === ry) return true;
     for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0]] as const) {
       const nx = x + dx;
       const ny = y + dy;
@@ -84,15 +93,24 @@ export function relicReachable(map: MapKinds): boolean {
       queue.push(j);
     }
   }
-  return false;
+  return relics.every((r) => seen[r] === 1);
 }
 
-/** One candidate layout: base row snow, relic in rows 12-23, the rest shuffled in. */
-function layout(rng: Rng): MapKinds {
+/**
+ * One candidate layout: base row snow, `relics` relics in rows 12-23 at least
+ * RELIC_SEPARATION apart, the rest shuffled in. With one relic the RNG is consumed
+ * exactly as before Phase 2, so existing seeds give the same maps.
+ */
+function layout(rng: Rng, relics: number): MapKinds {
   const map = new Uint8Array(TILE_COUNT); // all snow
-  const rx = rng(GRID);
-  const ry = RELIC_MIN_ROW + rng(GRID - RELIC_MIN_ROW);
-  map[tileIndex(rx, ry)] = TileKind.RELIC;
+  const placed: Array<[number, number]> = [];
+  while (placed.length < relics) {
+    const rx = rng(GRID);
+    const ry = RELIC_MIN_ROW + rng(GRID - RELIC_MIN_ROW);
+    if (placed.some(([px, py]) => chebyshev(px, py, rx, ry) < RELIC_SEPARATION)) continue;
+    placed.push([rx, ry]);
+    map[tileIndex(rx, ry)] = TileKind.RELIC;
+  }
   const free: number[] = [];
   for (let i = GRID; i < TILE_COUNT; i++) if (map[i] === TileKind.SNOW) free.push(i);
   // Partial Fisher-Yates: the first k entries are a uniform sample.
@@ -108,28 +126,32 @@ function layout(rng: Rng): MapKinds {
   return map;
 }
 
-/** Generates a solvable map, retrying up to 1 000 times (spec section 12). */
-export function generateMap(rng: Rng = cryptoRng): MapKinds {
+/** Generates a solvable map with 1-3 relics, retrying up to 1 000 times (spec section 12). */
+export function generateMap(rng: Rng = cryptoRng, relics = 1): MapKinds {
+  if (!Number.isInteger(relics) || relics < 1 || relics > MAX_RELICS) throw new Error(`relics must be 1-${MAX_RELICS}`);
   for (let attempt = 0; attempt < 1000; attempt++) {
-    const map = layout(rng);
+    const map = layout(rng, relics);
     if (relicReachable(map)) return map;
   }
   throw new Error('no solvable map after 1000 tries');
 }
 
 /** Checks a map against every dealer rule. Returns a list of problems (empty = valid). */
-export function validateMap(map: MapKinds): string[] {
+export function validateMap(map: MapKinds, relics = 1): string[] {
   const problems: string[] = [];
   if (map.length !== TILE_COUNT) return [`map has ${map.length} tiles`];
   const count = (k: number) => map.reduce((n, v) => n + (v === k ? 1 : 0), 0);
-  if (count(TileKind.RELIC) !== MAP_MIX.relic) problems.push('relic count');
+  if (count(TileKind.RELIC) !== relics) problems.push('relic count');
   if (count(TileKind.CREVASSE) !== MAP_MIX.crevasses) problems.push('crevasse count');
   if (count(TileKind.GOGGLES) !== MAP_MIX.goggles) problems.push('goggles count');
   if (count(TileKind.ROPE) !== MAP_MIX.ropes) problems.push('rope count');
   for (let x = 0; x < GRID; x++) if (map[x] !== TileKind.SNOW) problems.push(`base row (${x}, 0) is not snow`);
   if (problems.length === 0) {
-    const [, ry] = findRelic(map);
-    if (ry < RELIC_MIN_ROW) problems.push('relic below row 12');
+    const all = findRelics(map);
+    if (all.some(([, ry]) => ry < RELIC_MIN_ROW)) problems.push('relic below row 12');
+    for (let i = 0; i < all.length; i++)
+      for (let j = i + 1; j < all.length; j++)
+        if (chebyshev(all[i]![0], all[i]![1], all[j]![0], all[j]![1]) < RELIC_SEPARATION) problems.push('relics too close');
     if (!relicReachable(map)) problems.push('relic unreachable');
   }
   return problems;

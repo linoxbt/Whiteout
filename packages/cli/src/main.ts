@@ -14,8 +14,13 @@ import {
   GameStatus,
   SessionKey,
   TILE_KIND_NAMES,
+  BPS,
+  MAX_RELICS,
   applyEvents,
+  blizzardDue,
   decryptTiles,
+  getAllowlist,
+  getGame,
   emptyTrail,
   fromHex,
   getExplorers,
@@ -78,6 +83,11 @@ program
   .option('--duration <d>', 'hunt length, e.g. 2h (1h-72h)', `${DEFAULT_DURATION_MS}ms`)
   .option('--window <d>', 'resolve window, e.g. 300s (120s-3600s)', `${DEFAULT_RESOLVE_WINDOW_MS}ms`)
   .option('--confirm-well <last6>', 'last 6 characters of the well-fund address, to skip the prompt')
+  .option('--relics <n>', `Phase 2: ranked relics and prizes (1-${MAX_RELICS})`, '1')
+  .option('--shares <bps>', 'Phase 2: pot share per rank in basis points, e.g. 6000,2500,1500 (default: equal)')
+  .option('--blizzard-every <d>', 'Phase 2: a blizzard may start every <d>, e.g. 30m (min 10m; default none)')
+  .option('--blizzard-for <d>', 'Phase 2: how long drifts last, e.g. 5m (1m-15m, at most a third of the interval)', '5m')
+  .option('--allowlist <id>', 'Phase 2: gate the hunt behind this allowlist (only members may join)')
   .action(async (o) => {
     const e = env();
     await assertImmutable(e);
@@ -85,28 +95,119 @@ program
     console.log(`Well fund: ${well}`);
     await confirmTyped('Retype the last 6 characters of the well-fund address: ', well.slice(-6), o.confirmWell);
     const ctx = ctxFor(e, o.coin);
+    const relics = Number(o.relics);
+    const potShares = o.shares ? String(o.shares).split(',').map(Number) : equalShares(relics);
+    const blizzardEveryMs = o.blizzardEvery ? parseDuration(o.blizzardEvery) : 0;
+    const blizzardMs = blizzardEveryMs ? parseDuration(o.blizzardFor) : 0;
+    if (potShares.length !== relics || potShares.reduce((a, b) => a + b, 0) !== BPS) {
+      throw new Error(`--shares needs ${relics} values summing to ${BPS}.`);
+    }
+    const base = {
+      entryStake: BigInt(o.stake),
+      maxPlayers: Number(o.players),
+      durationMs: parseDuration(o.duration),
+      resolveWindowMs: parseDuration(o.window),
+      wellFund: well,
+      host: e.address,
+    };
+    const simple = relics === 1 && !blizzardEveryMs;
     const r = await exec(
       e,
-      tx.createLobby(ctx, {
-        entryStake: BigInt(o.stake),
-        maxPlayers: Number(o.players),
-        durationMs: parseDuration(o.duration),
-        resolveWindowMs: parseDuration(o.window),
-        wellFund: well,
-        host: e.address,
-      }),
+      simple ? tx.createLobby(ctx, base) : tx.createRankedLobby(ctx, { ...base, relics, potShares, blizzardEveryMs, blizzardMs }),
     );
     const game = r.created.find((c) => c.type.includes('::game::Game<'));
     const cap = r.created.find((c) => c.type.endsWith('::game::HostCap'));
     if (!game || !cap) throw new Error('could not find the new Game and HostCap in the effects');
     saveRecord(e, { gameId: game.id, capId: cap.id, coinType: o.coin, network: e.cfg.network });
     console.log(`Digest:  ${r.digest}\nGame:    ${game.id}\nHostCap: ${cap.id}`);
-    next(`whiteout deposit-prize --game ${game.id} --prize <objectId>`);
+    if (relics > 1) console.log(`Ranked: ${relics} relics, pot shares ${potShares.map((b) => `${b / 100}%`).join(' / ')}`);
+    if (blizzardEveryMs) console.log(`Blizzards every ${o.blizzardEvery}, drifts last ${o.blizzardFor}`);
+    if (o.allowlist) {
+      const g = await exec(e, tx.setAllowlist(ctx, { gameId: game.id, capId: cap.id, listId: o.allowlist }));
+      console.log(`Gated by allowlist ${o.allowlist}: ${g.digest}`);
+    }
+    next(`whiteout deposit-prize --game ${game.id} --prize <objectId>${relics > 1 ? `   (once per relic, rank 1 first)` : ''}`);
+  });
+
+program
+  .command('gate')
+  .description('Phase 2: gate a LOBBY hunt behind an allowlist (only members may join)')
+  .requiredOption('--game <id>')
+  .requiredOption('--allowlist <id>')
+  .action(async (o) => {
+    const e = env();
+    const rec = loadRecord(e, o.game);
+    const r = await exec(e, tx.setAllowlist(ctxFor(e, rec.coinType), { gameId: o.game, capId: rec.capId, listId: o.allowlist }));
+    const list = await getAllowlist(e.client, o.allowlist);
+    console.log(`Digest: ${r.digest}\nOnly the ${list.size} members of "${list.name}" can join.`);
+  });
+
+const allowlist = program.command('allowlist').description('Phase 2: holder allowlists for gated hunts');
+
+allowlist
+  .command('create')
+  .description('Create a shared allowlist; you receive the cap that edits it')
+  .requiredOption('--name <name>', 'e.g. "Mystic Yeti holders, snapshot 2026-12-01"')
+  .action(async (o) => {
+    const e = env();
+    const r = await exec(e, tx.createAllowlist({ packageId: e.cfg.packageId }, { name: o.name, owner: e.address }));
+    const list = r.created.find((c) => c.type.endsWith('::allowlist::Allowlist'));
+    const cap = r.created.find((c) => c.type.endsWith('::allowlist::AllowlistCap'));
+    console.log(`Digest: ${r.digest}\nAllowlist:    ${list?.id}\nAllowlistCap: ${cap?.id}`);
+    next(`whiteout allowlist add --list ${list?.id} --cap ${cap?.id} --file holders.txt`);
+  });
+
+for (const verb of ['add', 'remove'] as const) {
+  allowlist
+    .command(verb)
+    .description(`${verb === 'add' ? 'Add' : 'Remove'} addresses (one per line in --file, or comma-separated in --addresses)`)
+    .requiredOption('--list <id>')
+    .requiredOption('--cap <id>')
+    .option('--file <path>', 'text file with one address per line (a holder snapshot)')
+    .option('--addresses <list>', 'comma-separated addresses')
+    .action(async (o) => {
+      const e = env();
+      const raw = [...(o.file ? readFileSync(o.file, 'utf8').split(/\s+/) : []), ...(o.addresses ? String(o.addresses).split(',') : [])];
+      const addrs = [...new Set(raw.map((a) => a.trim().toLowerCase()).filter((a) => /^0x[0-9a-f]{1,64}$/.test(a)))];
+      if (!addrs.length) throw new Error('No addresses given.');
+      // Up to 1 000 per Move call, a few calls per transaction.
+      for (let i = 0; i < addrs.length; i += 4000) {
+        const chunk = addrs.slice(i, i + 4000);
+        const r = await exec(e, tx.editAllowlist({ packageId: e.cfg.packageId }, { listId: o.list, capId: o.cap, [verb]: chunk }));
+        console.log(`${verb === 'add' ? 'Added' : 'Removed'} ${chunk.length}: ${r.digest}`);
+      }
+      const list = await getAllowlist(e.client, o.list);
+      console.log(`"${list.name}" now has ${list.size} members.`);
+    });
+}
+
+allowlist
+  .command('show')
+  .requiredOption('--list <id>')
+  .action(async (o) => {
+    const e = env(false);
+    const list = await getAllowlist(e.client, o.list);
+    console.log(`${list.name}: ${list.size} members (table ${list.membersTable})`);
+  });
+
+program
+  .command('blizzard')
+  .description('Phase 2: start a due blizzard (anyone may)')
+  .requiredOption('--game <id>')
+  .action(async (o) => {
+    const e = env();
+    const { game, ctx } = await gameCtx(e, o.game);
+    if (!blizzardDue(game, Date.now())) {
+      throw new Error(game.blizzardEveryMs ? `Not due until ${new Date(game.nextBlizzardAt).toISOString()}.` : 'Blizzards are off for this hunt.');
+    }
+    const r = await exec(e, tx.blizzard(ctx, { gameId: o.game }));
+    const g = await getGame(e.client, o.game);
+    console.log(`Digest: ${r.digest}\n${g.drifts.length} drifts until ${new Date(g.driftUntil).toISOString()}`);
   });
 
 program
   .command('deposit-prize')
-  .description('Deposit the single prize object (FR2)')
+  .description('Deposit a prize object (FR2); ranked hunts take one per relic, rank 1 first')
   .requiredOption('--game <id>')
   .requiredOption('--prize <objectId>', 'an object you own with key + store')
   .action(async (o) => {
@@ -114,9 +215,11 @@ program
     const rec = loadRecord(e, o.game);
     const { object } = await e.client.core.getObject({ objectId: o.prize });
     const r = await exec(e, tx.depositPrize(ctxFor(e, rec.coinType), { gameId: o.game, capId: rec.capId, prizeId: o.prize, prizeType: object.type }));
-    saveRecord(e, { ...rec, prizeId: o.prize, prizeType: object.type });
-    console.log(`Digest: ${r.digest}\nPrize ${o.prize} (${object.type}) is in escrow.`);
-    next(`whiteout deal --game ${o.game} --enclave-url <url>   (or --ceremony for a zero-stake hunt)`);
+    const { game } = await gameCtx(e, o.game);
+    saveRecord(e, { ...rec, prizeId: rec.prizeId ?? o.prize, prizeType: rec.prizeType ?? object.type });
+    console.log(`Digest: ${r.digest}\nPrize ${o.prize} (${object.type}) is in escrow as rank ${game.prizesDeposited} of ${game.relics}.`);
+    if (game.prizesDeposited < game.relics) next(`whiteout deposit-prize --game ${o.game} --prize <objectId>   (rank ${game.prizesDeposited + 1})`);
+    else next(`whiteout deal --game ${o.game} --enclave-url <url>   (or --ceremony for a zero-stake hunt)`);
   });
 
 program
@@ -134,19 +237,19 @@ program
     const rec = loadRecord(e, o.game);
     const { game } = await gameCtx(e, o.game);
     if (game.status !== GameStatus.LOBBY) throw new Error('The hunt is not in LOBBY.');
-    if (!game.hasPrize) throw new Error('Deposit the prize first.');
+    if (game.prizesDeposited < game.relics) throw new Error(`Deposit all ${game.relics} prizes first (${game.prizesDeposited} so far).`);
     let d: DealFile;
     if (o.ceremony) {
       if (game.entryStake !== 0n) throw new Error('Ceremony hunts must have zero entry stake (MD5).');
       console.log('Dealing locally (ceremony). This hunt will be labelled host-dealt.');
-      d = await ceremonyDeal(e, o.game);
+      d = await ceremonyDeal(e, o.game, game.relics);
       checkDealFile(e, d);
     } else {
       const enclaveId = o.enclaveId ?? e.deploy.dealerEnclaveId;
       if (!o.enclaveUrl || !enclaveId) throw new Error('Pass --enclave-url and --enclave-id (or --ceremony).');
       console.log(`Requesting a deal from ${o.enclaveUrl} ...`);
       try {
-        d = await requestEnclaveDeal(e, o.game, o.enclaveUrl, enclaveId);
+        d = await requestEnclaveDeal(e, o.game, o.enclaveUrl, enclaveId, game.relics);
       } catch (err) {
         await alert(`Deal failed for ${o.game}: ${(err as Error).message}`);
         throw err;
@@ -193,8 +296,9 @@ program
   .requiredOption('--game <id>')
   .option('--watch', 'poll every 15 s and print changes')
   .option('--auto-freeze', 'with --watch: freeze overdue explorers (anyone may)')
+  .option('--auto-blizzard', 'with --watch: start blizzards when due (Phase 2)')
   .action(async (o) => {
-    const e = env(!!o.autoFreeze);
+    const e = env(!!o.autoFreeze || !!o.autoBlizzard);
     let cursor: string | null = null;
     const trail = emptyTrail();
     let prev: WatchSample | null = null;
@@ -212,7 +316,17 @@ program
           `players=${game.playerCount}/${game.maxPlayers} pot=${game.pot} active=${explorers.filter((x) => x.status === ExplorerStatus.ACTIVE).length} ` +
           `pending=${explorers.filter((x) => x.pending).length} overdue=${overdue.length} ends=${game.endsAt ? new Date(game.endsAt).toISOString() : '-'}`,
       );
-      if (game.finder) console.log(`  finder: ${game.finder}`);
+      game.finders.forEach((f, i) => console.log(`  rank ${i + 1} finder: ${f}`));
+      if (game.relics > 1) console.log(`  relics found ${game.finders.length}/${game.relics}, prizes held ${game.prizesHeld}`);
+      if (game.allowlist) console.log(`  gated by allowlist ${game.allowlist}`);
+      if (game.blizzardEveryMs) {
+        const drifting = now < game.driftUntil ? `${game.drifts.length} drifts until ${new Date(game.driftUntil).toISOString()}, ` : '';
+        console.log(`  blizzards: ${drifting}next ${new Date(game.nextBlizzardAt).toISOString()}`);
+      }
+      if (o.autoBlizzard && blizzardDue(game, now)) {
+        const r = await exec(e, tx.blizzard(ctx, { gameId: o.game }));
+        console.log(`  started a blizzard: ${r.digest}`);
+      }
       if (o.watch) {
         const sample: WatchSample = {
           overdue: overdue.length,
@@ -266,14 +380,20 @@ program
 
 program
   .command('reclaim')
-  .description('Take back a prize nobody won (FR17)')
+  .description('Take back every prize nobody won (FR17), highest rank first')
   .requiredOption('--game <id>')
   .action(async (o) => {
     const e = env();
     const rec = loadRecord(e, o.game);
-    const prizeType = rec.prizeType ?? (await prizeTypeOf(e, o.game));
-    const r = await exec(e, tx.reclaimPrize(ctxFor(e, rec.coinType), { gameId: o.game, capId: rec.capId, prizeType, host: e.address }));
-    console.log(`Digest: ${r.digest}\nThe prize is back in ${e.address}.`);
+    const ctx = ctxFor(e, rec.coinType);
+    const { game } = await gameCtx(e, o.game);
+    if (!game.prizesHeld) throw new Error('No prizes left to reclaim.');
+    const t = new (await import('@mysten/sui/transactions')).Transaction();
+    for (let rank = game.finders.length + game.prizesHeld; rank > game.finders.length; rank--) {
+      tx.reclaimPrize(ctx, { gameId: o.game, capId: rec.capId, prizeType: await prizeTypeOf(e, o.game, rank), host: e.address }, t);
+    }
+    const r = await exec(e, t);
+    console.log(`Digest: ${r.digest}\n${game.prizesHeld} prize(s) back in ${e.address}.`);
   });
 
 program
@@ -284,9 +404,15 @@ program
     const e = env();
     const rec = loadRecord(e, o.game);
     const { game } = await gameCtx(e, o.game);
-    const prizeType = game.hasPrize ? (rec.prizeType ?? (await prizeTypeOf(e, o.game))) : null;
-    const r = await exec(e, tx.cancel(ctxFor(e, rec.coinType), { gameId: o.game, capId: rec.capId, prizeType, host: e.address }));
-    console.log(`Digest: ${r.digest}\nThe lobby is cancelled.`);
+    const ctx = ctxFor(e, rec.coinType);
+    const prizeType = game.hasPrize ? await prizeTypeOf(e, o.game, game.prizesHeld) : null;
+    const t = tx.cancel(ctx, { gameId: o.game, capId: rec.capId, prizeType, host: e.address });
+    // Ranked lobbies: cancel returns the top prize; reclaim the rest in the same transaction.
+    for (let rank = game.prizesHeld - 1; rank >= 1; rank--) {
+      tx.reclaimPrize(ctx, { gameId: o.game, capId: rec.capId, prizeType: await prizeTypeOf(e, o.game, rank), host: e.address }, t);
+    }
+    const r = await exec(e, t);
+    console.log(`Digest: ${r.digest}\nThe lobby is cancelled and ${game.prizesHeld} prize(s) returned.`);
   });
 
 program
@@ -330,7 +456,7 @@ program
     const blobId = publisher ? await storeBlob(publisher, bytes, epochsFor(e, 0)) : await storeBlobSdk(e, bytes, epochsFor(e, 0));
     const r = await exec(e, tx.publishThaw(ctx, { gameId: o.game, capId: rec.capId, blobId }));
     saveRecord(e, { ...rec, thawBlob: blobId });
-    console.log(`Thaw file ${blobId} verified (relic at ${check.relic}). Digest: ${r.digest}`);
+    console.log(`Thaw file ${blobId} verified (relics at ${check.relics?.map((p) => `(${p})`).join(' ')}). Digest: ${r.digest}`);
   });
 
 program
@@ -349,7 +475,12 @@ program
       const { readBlob } = await import('@whiteout/core');
       const thaw = JSON.parse(new TextDecoder().decode(await readBlob(e.cfg.walrusAggregators, game.thawBlob)));
       const check = verifyThaw(thaw, o.game, game.dealerPk, game.dealTs);
-      console.log(check.ok ? `Thaw file: all 576 tiles verify; relic at ${check.relic}` : `Thaw file FAILED: ${check.problems.slice(0, 5).join('; ')}`);
+      const relicsOk = check.ok && check.relics!.length === game.relics;
+      console.log(
+        check.ok
+          ? `Thaw file: all 576 tiles verify; ${check.relics!.length} relic(s) at ${check.relics!.map((p) => `(${p})`).join(' ')}${relicsOk ? '' : ` (MISMATCH: the hunt has ${game.relics} prizes)`}`
+          : `Thaw file FAILED: ${check.problems.slice(0, 5).join('; ')}`,
+      );
     }
   });
 
@@ -393,10 +524,17 @@ async function assertImmutable(e: Env) {
   }
 }
 
-async function prizeTypeOf(e: Env, gameId: string): Promise<string> {
+async function prizeTypeOf(e: Env, gameId: string, rank = 1): Promise<string> {
   const t = applyEvents(emptyTrail(), (await listGameEvents(e.client, e.cfg.packageId, gameId)).events);
-  if (!t.prizeType) throw new Error('Could not find the prize type in the events.');
-  return t.prizeType;
+  const type = t.prizeTypes.get(rank);
+  if (!type) throw new Error(`Could not find the rank ${rank} prize type in the events.`);
+  return type;
+}
+
+/** Equal pot shares in basis points; rank 1 takes the rounding remainder. */
+function equalShares(relics: number): number[] {
+  const each = Math.floor(BPS / relics);
+  return Array.from({ length: relics }, (_, i) => (i === 0 ? BPS - each * (relics - 1) : each));
 }
 
 const statusName = (s: number) => Object.entries(GameStatus).find(([, v]) => v === s)?.[0] ?? String(s);

@@ -9,6 +9,9 @@ pub const RELIC_MIN_ROW: usize = 12;
 pub const CREVASSES: usize = 70;
 pub const GOGGLES: usize = 12;
 pub const ROPES: usize = 13;
+/// Phase 2: up to three ranked relics, at least this far apart (Chebyshev).
+pub const MAX_RELICS: usize = 3;
+pub const RELIC_SEPARATION: usize = 6;
 
 pub const SNOW: u8 = 0;
 pub const CREVASSE: u8 = 1;
@@ -28,12 +31,19 @@ pub fn find_relic(map: &Map) -> (usize, usize) {
     (i % GRID, i / GRID)
 }
 
+/// Every relic on the map, in row-major order.
+pub fn find_relics(map: &Map) -> Vec<(usize, usize)> {
+    map.iter().enumerate().filter(|(_, &k)| k == RELIC).map(|(i, _)| (i % GRID, i / GRID)).collect()
+}
+
 fn chebyshev(x1: usize, y1: usize, x2: usize, y2: usize) -> usize {
     x1.abs_diff(x2).max(y1.abs_diff(y2))
 }
 
-pub fn warmth(x: usize, y: usize, relic: (usize, usize)) -> u8 {
-    match chebyshev(x, y, relic.0, relic.1) {
+/// Warmth 0-5 from the distance to the nearest relic.
+pub fn warmth(x: usize, y: usize, relics: &[(usize, usize)]) -> u8 {
+    let d = relics.iter().map(|&(rx, ry)| chebyshev(x, y, rx, ry)).min().expect("map has a relic");
+    match d {
         0..=2 => 5,
         3..=4 => 4,
         5..=7 => 3,
@@ -59,18 +69,18 @@ pub fn hazards(map: &Map, x: usize, y: usize) -> u8 {
     n
 }
 
-/// A crevasse-free 4-way path joins row 0 to the relic (R20).
+/// A crevasse-free 4-way path joins row 0 to every relic (R20).
 pub fn relic_reachable(map: &Map) -> bool {
-    let (rx, ry) = find_relic(map);
+    let relics = find_relics(map);
+    if relics.is_empty() {
+        return false;
+    }
     let mut seen = [false; TILES];
     let mut queue: std::collections::VecDeque<(usize, usize)> = (0..GRID).map(|x| (x, 0)).collect();
     for x in 0..GRID {
         seen[idx(x, 0)] = true;
     }
     while let Some((x, y)) = queue.pop_front() {
-        if (x, y) == (rx, ry) {
-            return true;
-        }
         let neighbours = [(x as i32, y as i32 + 1), (x as i32 + 1, y as i32), (x as i32, y as i32 - 1), (x as i32 - 1, y as i32)];
         for (nx, ny) in neighbours {
             if !(0..GRID as i32).contains(&nx) || !(0..GRID as i32).contains(&ny) {
@@ -83,14 +93,21 @@ pub fn relic_reachable(map: &Map) -> bool {
             }
         }
     }
-    false
+    relics.iter().all(|&(x, y)| seen[idx(x, y)])
 }
 
-fn layout<R: Rng>(rng: &mut R) -> Map {
+fn layout<R: Rng>(rng: &mut R, relics: usize) -> Map {
     let mut map = [SNOW; TILES];
-    let rx = rng.gen_range(0..GRID);
-    let ry = rng.gen_range(RELIC_MIN_ROW..GRID);
-    map[idx(rx, ry)] = RELIC;
+    let mut placed: Vec<(usize, usize)> = vec![];
+    while placed.len() < relics {
+        let rx = rng.gen_range(0..GRID);
+        let ry = rng.gen_range(RELIC_MIN_ROW..GRID);
+        if placed.iter().any(|&(px, py)| chebyshev(px, py, rx, ry) < RELIC_SEPARATION) {
+            continue;
+        }
+        placed.push((rx, ry));
+        map[idx(rx, ry)] = RELIC;
+    }
     let mut free: Vec<usize> = (GRID..TILES).filter(|&i| map[i] == SNOW).collect();
     let (chosen, _) = free.partial_shuffle(rng, CREVASSES + GOGGLES + ROPES);
     for (n, &i) in chosen.iter().enumerate() {
@@ -99,16 +116,19 @@ fn layout<R: Rng>(rng: &mut R) -> Map {
     map
 }
 
-/// A solvable map, retrying up to 1 000 times (spec section 12). The enclave passes
-/// the OS RNG; tests pass a seeded one.
-pub fn generate<R: Rng>(rng: &mut R) -> Option<Map> {
-    (0..1000).map(|_| layout(rng)).find(relic_reachable)
+/// A solvable map with `relics` relics (1-3), retrying up to 1 000 times (spec
+/// section 12). The enclave passes the OS RNG; tests pass a seeded one.
+pub fn generate<R: Rng>(rng: &mut R, relics: usize) -> Option<Map> {
+    if !(1..=MAX_RELICS).contains(&relics) {
+        return None;
+    }
+    (0..1000).map(|_| layout(rng, relics)).find(relic_reachable)
 }
 
-pub fn validate(map: &Map) -> Vec<String> {
+pub fn validate(map: &Map, relics: usize) -> Vec<String> {
     let mut problems = vec![];
     let count = |k: u8| map.iter().filter(|&&v| v == k).count();
-    if count(RELIC) != 1 {
+    if count(RELIC) != relics {
         return vec!["relic count".into()];
     }
     if count(CREVASSE) != CREVASSES {
@@ -123,8 +143,14 @@ pub fn validate(map: &Map) -> Vec<String> {
     if map[..GRID].iter().any(|&k| k != SNOW) {
         problems.push("base row is not all snow".into());
     }
-    if find_relic(map).1 < RELIC_MIN_ROW {
+    let all = find_relics(map);
+    if all.iter().any(|&(_, y)| y < RELIC_MIN_ROW) {
         problems.push("relic below row 12".into());
+    }
+    for (i, a) in all.iter().enumerate() {
+        if all[i + 1..].iter().any(|b| chebyshev(a.0, a.1, b.0, b.1) < RELIC_SEPARATION) {
+            problems.push("relics too close".into());
+        }
     }
     if !relic_reachable(map) {
         problems.push("relic unreachable".into());

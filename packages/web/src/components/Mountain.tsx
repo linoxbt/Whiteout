@@ -1,5 +1,5 @@
 /** The 24x24 mountain on a canvas. Base camp (row 0) is at the bottom; north is up. */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GRID, TileKind, sameId, type ExplorerState, type Tile, type Trail } from '@whiteout/core';
 
 export interface MountainProps {
@@ -39,6 +39,19 @@ export function Mountain(p: MountainProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const spin = useRef(0);
+  // The thaw sweeps up the mountain from base camp (spec section 11, Thaw screen).
+  const [thawRows, setThawRows] = useState(0);
+  useEffect(() => {
+    if (!p.thaw) return setThawRows(0);
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return setThawRows(GRID);
+    let row = 0;
+    const t = setInterval(() => {
+      row += 1;
+      setThawRows(row);
+      if (row >= GRID) clearInterval(t);
+    }, 70);
+    return () => clearInterval(t);
+  }, [p.thaw]);
 
   useEffect(() => {
     let raf = 0;
@@ -80,7 +93,7 @@ export function Mountain(p: MountainProps) {
         for (let x = 0; x < GRID; x++) {
           const key = `${x},${y}`;
           const mine = p.tiles.get(key);
-          const thawKind = p.thaw ? p.thaw[y * GRID + x] : undefined;
+          const thawKind = p.thaw && y < thawRows ? p.thaw[y * GRID + x] : undefined;
           const publicKind = p.trail.resolved.get(key);
           const kind = mine?.kind ?? thawKind ?? publicKind;
           if (kind === undefined) continue;
@@ -111,7 +124,7 @@ export function Mountain(p: MountainProps) {
       c.lineTo(size, size - 1);
       c.stroke();
 
-      if (p.relic) {
+      if (p.relic && (!p.thaw || p.relic[1] < thawRows)) {
         c.strokeStyle = '#d4a017';
         c.lineWidth = 3;
         c.strokeRect(px(p.relic[0]) + 1.5, py(p.relic[1]) + 1.5, cell - 3, cell - 3);
@@ -149,7 +162,7 @@ export function Mountain(p: MountainProps) {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
     };
-  }, [p.trail, p.me, p.address, p.tiles, p.revealing, p.thaw, p.relic]);
+  }, [p.trail, p.me, p.address, p.tiles, p.revealing, p.thaw, p.relic, thawRows]);
 
   return (
     <div ref={wrap} className="mountain">

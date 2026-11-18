@@ -1,5 +1,6 @@
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRevealAll } from './lib/motion';
 import { config } from './config';
 import { useRoute } from './lib/useHunt';
 import { Home } from './screens/Home';
@@ -20,7 +21,10 @@ export function App() {
     window.addEventListener('scroll', on, { passive: true });
     return () => window.removeEventListener('scroll', on);
   }, []);
-  useEffect(() => window.scrollTo(0, 0), [route.join('/')]);
+  const key = route.join('/');
+  useEffect(() => window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior }), [key]);
+  const mainRef = useRef<HTMLElement>(null);
+  useRevealAll(mainRef, key);
 
   let page;
   if (!home && route[1]) {
@@ -33,6 +37,11 @@ export function App() {
     <div className="app">
       <header className={`top ${scrolled || !home ? 'solid' : ''}`}>
         <a href="#/" className="brand" aria-label="Whiteout home">
+          <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M3 26 13 8l5 7.6 3.6-4.8L29 26z" fill="#102233" />
+            <path d="M13 8l-3 5.4 3-1.6 1.8 2.4z" fill="#ffffff" />
+            <circle cx="24" cy="7" r="2.2" fill="#5aa9dc" />
+          </svg>
           Whiteout
         </a>
         <nav>
@@ -42,7 +51,9 @@ export function App() {
         </nav>
         <ConnectButton />
       </header>
-      <main className={home ? '' : 'page wrap'}>{page}</main>
+      <main ref={mainRef} key={key} className={`route ${home ? '' : 'page wrap'}`}>
+        {page}
+      </main>
       <div className="wrap">
         <footer className="log">
           <span className="tele">Whiteout / Sui {config.network}</span>

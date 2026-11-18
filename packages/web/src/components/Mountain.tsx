@@ -15,16 +15,16 @@ export interface MountainProps {
 }
 
 const COLORS = {
-  fog: '#0e1217',
-  fogLine: 'rgba(233, 238, 242, 0.03)',
-  grid: 'rgba(255, 255, 255, 0.035)',
-  snow: '#e9eef2',
-  crevasse: '#000000',
-  goggles: '#9cc9e8',
-  rope: '#d9a066',
-  relic: '#f2c86b',
-  seen: '#1a2028',
-  base: 'rgba(156, 201, 232, 0.45)',
+  fog: '#e6edf3',
+  fogLine: 'rgba(30, 60, 90, 0.035)',
+  grid: 'rgba(30, 60, 90, 0.06)',
+  snow: '#ffffff',
+  crevasse: '#1c2a38',
+  goggles: '#5aa9dc',
+  rope: '#c98d4f',
+  relic: '#e3a82f',
+  seen: '#d3dde6',
+  base: 'rgba(47, 127, 181, 0.55)',
 };
 
 const KIND_LABEL: Record<number, string> = { 0: '', 1: 'C', 2: 'G', 3: 'R', 4: '★' };
@@ -78,8 +78,8 @@ export function Mountain(p: MountainProps) {
       c.fillStyle = COLORS.fog;
       c.fillRect(0, 0, size, size);
       const glow = c.createRadialGradient(size / 2, size, 0, size / 2, size, size);
-      glow.addColorStop(0, 'rgba(156, 201, 232, 0.07)');
-      glow.addColorStop(1, 'rgba(156, 201, 232, 0)');
+      glow.addColorStop(0, 'rgba(255, 255, 255, 0.7)');
+      glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
       c.fillStyle = glow;
       c.fillRect(0, 0, size, size);
       c.strokeStyle = COLORS.fogLine;
@@ -115,28 +115,29 @@ export function Mountain(p: MountainProps) {
           const lit = !!mine || thawKind !== undefined;
           c.save();
           if (lit && kind !== TileKind.CREVASSE) {
-            c.shadowColor = kind === TileKind.RELIC ? 'rgba(242, 200, 107, 0.8)' : 'rgba(232, 241, 251, 0.35)';
-            c.shadowBlur = kind === TileKind.RELIC ? 18 : 8;
+            c.shadowColor = kind === TileKind.RELIC ? 'rgba(227, 168, 47, 0.75)' : 'rgba(30, 60, 90, 0.18)';
+            c.shadowBlur = kind === TileKind.RELIC ? 18 : 6;
+            c.shadowOffsetY = kind === TileKind.RELIC ? 0 : 1.5;
           }
           c.fillStyle = lit ? KIND_FILL[kind]! : COLORS.seen;
           roundRect(c, px(x) + 1, py(y) + 1, cell - 2, cell - 2, Math.max(1, cell * 0.06));
           c.fill();
           c.restore();
           if (lit && kind === TileKind.CREVASSE) {
-            c.strokeStyle = 'rgba(156, 201, 232, 0.5)';
+            c.strokeStyle = 'rgba(90, 169, 220, 0.6)';
             c.lineWidth = 1;
             roundRect(c, px(x) + 1.5, py(y) + 1.5, cell - 3, cell - 3, Math.max(1, cell * 0.06));
             c.stroke();
           }
           if (kind !== TileKind.SNOW) {
-            c.fillStyle = kind === TileKind.CREVASSE ? '#9cc9e8' : lit ? '#0b1017' : '#5b6577';
+            c.fillStyle = kind === TileKind.CREVASSE ? '#9fd0ef' : lit ? '#ffffff' : '#7b8a99';
             c.font = `600 ${fontPx}px 'Datatype Variable', monospace`;
             c.fillText(KIND_LABEL[kind]!, px(x) + cell / 2, py(y) + cell / 2);
           }
           if (mine) {
             // Clues: warmth (top-left) and hazards (bottom-right).
             c.font = `600 ${fontPx * 0.72}px 'Datatype Variable', monospace`;
-            c.fillStyle = `hsl(${205 - mine.warmth * 35}, 75%, 40%)`;
+            c.fillStyle = `hsl(${205 - mine.warmth * 35}, 70%, 42%)`;
             c.fillText(String(mine.warmth), px(x) + cell * 0.27, py(y) + cell * 0.28);
             if (mine.hazards > 0) {
               c.fillStyle = '#e5484d';
@@ -154,7 +155,7 @@ export function Mountain(p: MountainProps) {
       c.stroke();
 
       if (p.relic && (!p.thaw || p.relic[1] < thawRows)) {
-        c.strokeStyle = '#f2c86b';
+        c.strokeStyle = '#e3a82f';
         c.lineWidth = 2;
         c.strokeRect(px(p.relic[0]) + 1.5, py(p.relic[1]) + 1.5, cell - 3, cell - 3);
       }
@@ -164,23 +165,23 @@ export function Mountain(p: MountainProps) {
         if (e.withdrawn && !e.finder) continue;
         const own = !!p.address && sameId(e.owner, p.address);
         if (own) continue;
-        yeti(c, px(e.x) + cell / 2, py(e.y) + cell / 2, cell, e.frozen ? '#8fb3d9' : '#6b7c96', e.frozen);
+        yeti(c, px(e.x) + cell / 2, py(e.y) + cell / 2, cell, e.frozen ? '#a9c7de' : '#93a3b3', e.frozen);
       }
       if (p.me) {
         if (p.me.pending && p.revealing) {
           spin.current = (spin.current + 0.12) % (Math.PI * 2);
-          c.strokeStyle = '#9cc9e8';
+          c.strokeStyle = '#2f7fb5';
           c.lineWidth = 2.5;
           c.beginPath();
           c.arc(px(p.me.pending.x) + cell / 2, py(p.me.pending.y) + cell / 2, cell * 0.42, spin.current, spin.current + 4);
           c.stroke();
         }
         if (p.me.vision > 0) {
-          c.strokeStyle = 'rgba(156,201,232,0.55)';
+          c.strokeStyle = 'rgba(47,127,181,0.45)';
           c.lineWidth = 2;
           c.strokeRect(px(p.me.x - 1), py(p.me.y + 1), cell * 3, cell * 3);
         }
-        yeti(c, px(p.me.x) + cell / 2, py(p.me.y) + cell / 2, cell, p.me.status === 1 ? '#8fb3d9' : '#ffffff', p.me.status === 1, true);
+        yeti(c, px(p.me.x) + cell / 2, py(p.me.y) + cell / 2, cell, p.me.status === 1 ? '#a9c7de' : '#16324a', p.me.status === 1, true);
       }
       if (p.revealing) raf = requestAnimationFrame(draw);
     };
@@ -204,24 +205,24 @@ function yeti(c: CanvasRenderingContext2D, x: number, y: number, cell: number, f
   const r = cell * (own ? 0.36 : 0.28);
   c.save();
   if (own) {
-    c.shadowColor = 'rgba(156, 201, 232, 0.9)';
+    c.shadowColor = 'rgba(47, 127, 181, 0.55)';
     c.shadowBlur = cell * 0.8;
   }
   c.fillStyle = fill;
-  c.strokeStyle = own ? '#9cc9e8' : 'rgba(255,255,255,0.35)';
+  c.strokeStyle = own ? '#ffffff' : 'rgba(255,255,255,0.9)';
   c.lineWidth = own ? 2 : 1;
   c.beginPath();
   c.arc(x, y, r, 0, Math.PI * 2);
   c.fill();
   c.restore();
   c.stroke();
-  c.fillStyle = '#0b1017';
+  c.fillStyle = own ? '#ffffff' : '#1c2a38';
   c.beginPath();
   c.arc(x - r * 0.35, y - r * 0.12, r * 0.13, 0, Math.PI * 2);
   c.arc(x + r * 0.35, y - r * 0.12, r * 0.13, 0, Math.PI * 2);
   c.fill();
   if (frozen) {
-    c.strokeStyle = '#9cc9e8';
+    c.strokeStyle = '#5aa9dc';
     c.lineWidth = 1.5;
     c.strokeRect(x - r, y - r, r * 2, r * 2);
   }

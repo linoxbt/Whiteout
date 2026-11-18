@@ -31,7 +31,7 @@ export function registerAdmin(program: Command) {
     const changes = t.effects!.changedObjects;
     const packageId = changes.find((c) => c.outputState === 'PackageWrite')?.objectId;
     const typeOf = (id: string) => t.objectTypes?.[id] ?? '';
-    const caps = changes.filter((c) => c.idOperation === 'Created' && typeOf(c.objectId) === '0x2::package::UpgradeCap').map((c) => c.objectId);
+    const caps = changes.filter((c) => c.idOperation === 'Created' && /^0x0*2::package::UpgradeCap$/.test(typeOf(c.objectId))).map((c) => c.objectId);
     const dealerCap = changes.find((c) => c.idOperation === 'Created' && /::enclave::Cap<.*::dealer::DEALER>/.test(typeOf(c.objectId)))?.objectId;
     if (!packageId) throw new Error('No package was published in that transaction.');
     update(e.deployPath, { packageId, enclavePackageId: packageId, upgradeCapIds: caps, dealerCapId: dealerCap ?? '', publishDigest: digest });

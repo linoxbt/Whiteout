@@ -38,11 +38,13 @@ public struct TileKind has copy, drop {
     kind: u8,
 }
 
-/// Signed by the dealer over the whole deal; commits to the ciphertexts (R23).
+/// Signed by the dealer over the whole deal; commits to the ciphertexts (R23) and
+/// to how many relics the map holds, which must equal the game's prize count.
 public struct DealPayload has copy, drop {
     game_id: ID,
     grid: u8,
     tiles: u16,
+    relics: u8,
     ct_hash: vector<u8>,
 }
 
@@ -64,9 +66,12 @@ public fun intent_deal(): u8 { INTENT_DEAL }
 
 public fun intent_tile_kind(): u8 { INTENT_TILE_KIND }
 
-public fun deal_payload(game_id: ID, ct_hash: vector<u8>): DealPayload {
-    DealPayload { game_id, grid: GRID, tiles: TILES, ct_hash }
+public fun deal_payload(game_id: ID, relics: u8, ct_hash: vector<u8>): DealPayload {
+    DealPayload { game_id, grid: GRID, tiles: TILES, relics, ct_hash }
 }
+
+/// Row-major tile index, as used for claimed relics and blizzard drifts.
+public fun index(x: u8, y: u8): u16 { (y as u16) * (GRID as u16) + (x as u16) }
 
 /// The exact bytes the dealer signs for a tile's kind.
 public fun kind_message(game_id: ID, deal_ts: u64, x: u8, y: u8, kind: u8): vector<u8> {

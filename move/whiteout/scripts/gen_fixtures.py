@@ -58,9 +58,9 @@ def kind_msg(game_id: bytes, x: int, y: int, kind: int) -> bytes:
     return intent(INTENT_TILE_KIND, DEAL_TS, game_id + bytes([x, y, kind]))
 
 
-def deal_msg(game_id: bytes, ct_hash: bytes) -> bytes:
-    """BCS of IntentMessage<tiles::DealPayload { game_id, grid: 24, tiles: 576, ct_hash }>."""
-    payload = game_id + bytes([GRID]) + (576).to_bytes(2, "little") + uleb(len(ct_hash)) + ct_hash
+def deal_msg(game_id: bytes, ct_hash: bytes, relics: int = 1) -> bytes:
+    """BCS of IntentMessage<tiles::DealPayload { game_id, grid: 24, tiles: 576, relics, ct_hash }>."""
+    payload = game_id + bytes([GRID]) + (576).to_bytes(2, "little") + bytes([relics]) + uleb(len(ct_hash)) + ct_hash
     return intent(INTENT_DEAL, DEAL_TS, payload)
 
 
@@ -80,6 +80,10 @@ LANES = {
     (0, 1): GOGGLES, **{(0, y): SNOW for y in range(2, 24)},
     # Column 1: second pair of goggles at row 5 (reset test).
     **{(1, y): SNOW for y in range(1, 24) if y != 5}, (1, 5): GOGGLES,
+    # Phase 2: more relics for ranked games. Column 2 is snow up to a relic at
+    # (2, 13); column 20 is snow up to a relic at (20, 16).
+    **{(2, y): SNOW for y in range(1, 13)}, (2, 13): RELIC,
+    **{(20, y): SNOW for y in range(1, 16)}, (20, 16): RELIC,
 }
 
 
@@ -122,6 +126,8 @@ def main() -> None:
         sk.sign(kind_msg(game_id, i % GRID, i // GRID, k)) for i, k in enumerate(kinds)
     )
     deal_sig = sk.sign(deal_msg(game_id, ct_hash))
+    deal_sig_2 = sk.sign(deal_msg(game_id, ct_hash, 2))
+    deal_sig_3 = sk.sign(deal_msg(game_id, ct_hash, 3))
     deal_sig_other = sk.sign(deal_msg(other_game_id, ct_hash))
     other_game_sig_5_1 = sk.sign(kind_msg(other_game_id, 5, 1, kinds[1 * GRID + 5]))
 
@@ -136,6 +142,8 @@ const DEAL_TS: u64 = {DEAL_TS};
 const DEALER_PK: vector<u8> = x"{hexs(pk)}";
 const CT_HASH: vector<u8> = x"{hexs(ct_hash)}";
 const DEAL_SIG: vector<u8> = x"{hexs(deal_sig)}";
+const DEAL_SIG_2_RELICS: vector<u8> = x"{hexs(deal_sig_2)}";
+const DEAL_SIG_3_RELICS: vector<u8> = x"{hexs(deal_sig_3)}";
 const DEAL_SIG_OTHER_GAME: vector<u8> = x"{hexs(deal_sig_other)}";
 const OTHER_GAME_SIG_5_1: vector<u8> = x"{hexs(other_game_sig_5_1)}";
 /// Kind of tile (x, y) at index y*24+x.
@@ -157,6 +165,13 @@ public fun ct_hash(): vector<u8> {{ CT_HASH }}
 
 public fun deal_sig(): vector<u8> {{ DEAL_SIG }}
 
+/// The deal signature for a game with `relics` relics (1 to 3).
+public fun deal_sig_for(relics: u8): vector<u8> {{
+    if (relics == 2) DEAL_SIG_2_RELICS
+    else if (relics == 3) DEAL_SIG_3_RELICS
+    else DEAL_SIG
+}}
+
 public fun deal_sig_other_game(): vector<u8> {{ DEAL_SIG_OTHER_GAME }}
 
 public fun other_game_sig_5_1(): vector<u8> {{ OTHER_GAME_SIG_5_1 }}
@@ -174,7 +189,7 @@ public fun sig(x: u8, y: u8): vector<u8> {{
     out
 }}
 """)
-    print(f"wrote {OUT} (game {game_id.hex()}, relic at (5, 12))")
+    print(f"wrote {OUT} (game {game_id.hex()}, relics at (5, 12), (2, 13), (20, 16))")
 
 
 if __name__ == "__main__":

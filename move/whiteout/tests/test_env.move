@@ -16,6 +16,7 @@ const WELL: address = @0xB0;
 const ALICE: address = @0xA1;
 const BOB: address = @0xB2;
 const CAROL: address = @0xC3;
+const DAVE: address = @0xD4;
 
 /// Wall-clock time at which the test game opens.
 const T0: u64 = 1_000_000;
@@ -45,6 +46,8 @@ public fun bob(): address { BOB }
 
 public fun carol(): address { CAROL }
 
+public fun dave(): address { DAVE }
+
 public fun t0(): u64 { T0 }
 
 public fun duration(): u64 { TWO_HOURS }
@@ -68,6 +71,60 @@ public fun host_ctx(): TxContext {
 public fun lobby(entry_stake: u64, max_players: u16): (Game<SUI>, HostCap, Env) {
     let mut ctx = host_ctx();
     let (g, cap) = game::new_lobby<SUI>(entry_stake, max_players, TWO_HOURS, WINDOW, WELL, &mut ctx);
+    finish_lobby(g, cap, ctx)
+}
+
+/// Phase 2: a ranked LOBBY game (and optional blizzards) with the fixture ID.
+public fun ranked_lobby(
+    entry_stake: u64,
+    max_players: u16,
+    relics: u8,
+    shares: vector<u16>,
+    blizzard_every_ms: u64,
+    blizzard_ms: u64,
+): (Game<SUI>, HostCap, Env) {
+    let mut ctx = host_ctx();
+    let (g, cap) = game::new_ranked_lobby<SUI>(
+        entry_stake,
+        max_players,
+        TWO_HOURS,
+        WINDOW,
+        WELL,
+        relics,
+        shares,
+        blizzard_every_ms,
+        blizzard_ms,
+        &mut ctx,
+    );
+    finish_lobby(g, cap, ctx)
+}
+
+/// Phase 2: a ranked game with one prize per relic, dealt by the fixture enclave.
+public fun open_ranked(
+    entry_stake: u64,
+    max_players: u16,
+    relics: u8,
+    shares: vector<u16>,
+    blizzard_every_ms: u64,
+    blizzard_ms: u64,
+): (Game<SUI>, HostCap, Env) {
+    let (mut g, cap, mut env) = ranked_lobby(
+        entry_stake,
+        max_players,
+        relics,
+        shares,
+        blizzard_every_ms,
+        blizzard_ms,
+    );
+    (relics as u64).do!(|_| {
+        let prize = env.new_prize();
+        game::deposit_prize(&mut g, &cap, prize);
+    });
+    env.deal_enclave(&mut g, &cap, fixtures::deal_sig_for(relics));
+    (g, cap, env)
+}
+
+fun finish_lobby(g: Game<SUI>, cap: HostCap, mut ctx: TxContext): (Game<SUI>, HostCap, Env) {
     assert!(object::id(&g) == fixtures::game_id());
     let mut clock = clock::create_for_testing(&mut ctx);
     // The test clock never moves backwards within one test, so a second game
@@ -154,6 +211,11 @@ public fun resolve(env: &mut Env, g: &Game<SUI>, x: &mut Explorer<SUI>) {
     let (px, py, _) = x.pending();
     let ctx = env.ctx(x.owner());
     game::resolve(g, x, fixtures::kind(px, py), fixtures::sig(px, py), &env.clock, &ctx);
+}
+
+/// Walks straight north `n` times, resolving each new tile.
+public fun walk_north(env: &mut Env, g: &Game<SUI>, x: &mut Explorer<SUI>, n: u64) {
+    n.do!(|_| env.walk(g, x, N));
 }
 
 /// Step, then resolve if the step created a pending tile.

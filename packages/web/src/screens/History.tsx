@@ -184,7 +184,8 @@ export function History() {
                         <span key={f.rank} className="finder">
                           <i>{['1st', '2nd', '3rd'][f.rank - 1]}</i>
                           {account && sameId(f.finder, account.address) ? 'You' : shortId(f.finder, 4)}
-                          <small>+{amount(f.pot, g.coinType)}</small>
+                          {/* The pot share; the prize itself is a separate object. Empty on free hunts. */}
+                          {f.pot > 0n && <small>+{amount(f.pot, g.coinType)} pot</small>}
                         </span>
                       ))
                   ) : (

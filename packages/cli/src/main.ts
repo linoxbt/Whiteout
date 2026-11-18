@@ -319,7 +319,7 @@ program
       game.finders.forEach((f, i) => console.log(`  rank ${i + 1} finder: ${f}`));
       if (game.relics > 1) console.log(`  relics found ${game.finders.length}/${game.relics}, prizes held ${game.prizesHeld}`);
       if (game.allowlist) console.log(`  gated by allowlist ${game.allowlist}`);
-      if (game.blizzardEveryMs) {
+      if (game.blizzardEveryMs && game.status === GameStatus.OPEN && now < game.endsAt) {
         const drifting = now < game.driftUntil ? `${game.drifts.length} drifts until ${new Date(game.driftUntil).toISOString()}, ` : '';
         console.log(`  blizzards: ${drifting}next ${new Date(game.nextBlizzardAt).toISOString()}`);
       }

@@ -254,7 +254,7 @@ const phases: Record<string, () => Promise<void>> = {
     await joinAndConsent(p.page, 12);
     await p.page.locator('.here .meta strong').filter({ hasNotText: 'In the fog' }).waitFor({ timeout: 120_000 });
     const here = await p.page.innerText('.here .meta');
-    check('player: first tile of a browser-dealt map decrypts and verifies', /Snow|Goggles|Rope/.test(here), here.replace(/\n/g, ' '));
+    check('player: first tile of a browser-dealt map decrypts and verifies', /snow|goggles|rope/i.test(here), here.replace(/\n/g, ' '));
     check('no page errors (host, player)', errors.length + p.errors.length === 0, [...errors, ...p.errors].join(' | '));
     await b.close();
   },
@@ -276,11 +276,16 @@ const phases: Record<string, () => Promise<void>> = {
     const h = await open(b, 'E2E Host', host, `#/host/${gameId}`);
     await connect(h.page, 'E2E Host');
     const btn = h.page.getByRole('button', { name: 'Start the due blizzard' });
-    if (await btn.isVisible({ timeout: 15_000 }).catch(() => false)) {
+    if (await btn.waitFor({ timeout: 15_000 }).then(() => true, () => false)) {
       await btn.click();
       await h.page.getByText('A blizzard started.').waitFor({ timeout: 90_000 }).catch(() => {});
     }
-    const g = await getGame(client, gameId);
+    // Whoever starts it (an active player's client or the host), wait for the drifts to land.
+    let g = await getGame(client, gameId);
+    for (let i = 0; i < 30 && g.driftUntil <= g0.driftUntil; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      g = await getGame(client, gameId);
+    }
     check('blizzard: 12 drifts on-chain, none on base camp, at most 8 per row', g.drifts.length === 12 && g.drifts.every((d) => d >= GRID) && Math.max(...Object.values(g.drifts.reduce<Record<number, number>>((m, d) => ((m[Math.floor(d / GRID)] = (m[Math.floor(d / GRID)] ?? 0) + 1), m), {}))) <= 8);
     await p.page.getByText(/drifts melt in/).waitFor({ timeout: 30_000 }).catch(() => {});
     await shot(p.page, 'F2-blizzard-player');

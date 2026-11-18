@@ -1,4 +1,5 @@
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
+import { Logo } from './components/Logo';
 import { config } from './config';
 import { useRoute } from './lib/useHunt';
 import { Home } from './screens/Home';
@@ -16,15 +17,28 @@ export function App() {
   return (
     <div className="app">
       <header className="top">
-        <a href="#/" className="brand">
-          <img src="/favicon.svg" alt="" width={28} height={28} /> Whiteout
+        <a href="#/" className="brand" aria-label="Whiteout home">
+          <Logo /> Whiteout
         </a>
-        {config.network !== 'mainnet' && <span className="badge none">{config.network}</span>}
+        <nav>
+          <a href="#/">Hunts</a>
+          <a href="#/" onClick={() => setTimeout(() => document.getElementById('how')?.scrollIntoView({ behavior: 'smooth' }), 0)}>
+            How it works
+          </a>
+        </nav>
+        {config.network !== 'mainnet' && (
+          <span className="pill">
+            <span className="dot live" /> {config.network}
+          </span>
+        )}
         <ConnectButton />
       </header>
       <main>{page}</main>
-      <footer className="small">
-        Half of every frozen stake funds Lofi Foundation water wells.
+      <footer>
+        <span>Half of every frozen stake funds Lofi Foundation water wells.</span>
+        <span>
+          Built on Sui · Seal · Walrus · Nautilus
+        </span>
       </footer>
     </div>
   );

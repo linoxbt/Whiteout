@@ -101,7 +101,7 @@ async function readWithFailover(aggregators: string[], path: string, fetchFn: ty
   throw last;
 }
 
-/** Downloads all 576 tiles, 16 at a time (integrity check before join, spec section 12). */
+/** Downloads all 576 tiles, 32 at a time (integrity check before join, spec section 12). */
 export async function readAllTiles(
   aggregators: string[],
   quiltId: string,
@@ -118,6 +118,6 @@ export async function readAllTiles(
       onProgress?.(++done);
     }
   }
-  await Promise.all(Array.from({ length: 16 }, worker));
+  await Promise.all(Array.from({ length: 32 }, worker));
   return out;
 }

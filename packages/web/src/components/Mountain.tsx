@@ -15,15 +15,16 @@ export interface MountainProps {
 }
 
 const COLORS = {
-  fog: '#c7d0dd',
-  fogLine: '#b7c2d2',
-  snow: '#f4f7fb',
-  crevasse: '#20283a',
-  goggles: '#7aa7e0',
-  rope: '#c9965b',
-  relic: '#f2c94c',
-  seen: '#e3e9f2',
-  grid: '#aab6c8',
+  fog: '#0a1018',
+  fogLine: 'rgba(143, 216, 255, 0.045)',
+  grid: 'rgba(255, 255, 255, 0.035)',
+  snow: '#e8f1fb',
+  crevasse: '#000000',
+  goggles: '#8fd8ff',
+  rope: '#d9a066',
+  relic: '#ffcf5c',
+  seen: '#16202d',
+  base: 'rgba(143, 216, 255, 0.35)',
 };
 
 const KIND_LABEL: Record<number, string> = { 0: '', 1: 'C', 2: 'G', 3: 'R', 4: '★' };
@@ -59,7 +60,7 @@ export function Mountain(p: MountainProps) {
       const canvas = ref.current;
       const box = wrap.current;
       if (!canvas || !box) return;
-      const size = Math.min(box.clientWidth, 640);
+      const size = Math.min(box.clientWidth, 720);
       const dpr = window.devicePixelRatio || 1;
       if (canvas.width !== size * dpr) {
         canvas.width = size * dpr;
@@ -73,8 +74,13 @@ export function Mountain(p: MountainProps) {
       const px = (x: number) => x * cell;
       const py = (y: number) => (GRID - 1 - y) * cell; // row 0 at the bottom
 
-      // Fog.
+      // Fog: dark slate with a faint diagonal sheen and a cell grid.
       c.fillStyle = COLORS.fog;
+      c.fillRect(0, 0, size, size);
+      const glow = c.createRadialGradient(size / 2, size, 0, size / 2, size, size);
+      glow.addColorStop(0, 'rgba(143, 216, 255, 0.10)');
+      glow.addColorStop(1, 'rgba(143, 216, 255, 0)');
+      c.fillStyle = glow;
       c.fillRect(0, 0, size, size);
       c.strokeStyle = COLORS.fogLine;
       c.lineWidth = 1;
@@ -82,6 +88,15 @@ export function Mountain(p: MountainProps) {
         c.beginPath();
         c.moveTo(i * cell, 0);
         c.lineTo((i + GRID) * cell, size);
+        c.stroke();
+      }
+      c.strokeStyle = COLORS.grid;
+      for (let i = 1; i < GRID; i++) {
+        c.beginPath();
+        c.moveTo(i * cell + 0.5, 0);
+        c.lineTo(i * cell + 0.5, size);
+        c.moveTo(0, i * cell + 0.5);
+        c.lineTo(size, i * cell + 0.5);
         c.stroke();
       }
 
@@ -97,27 +112,41 @@ export function Mountain(p: MountainProps) {
           const publicKind = p.trail.resolved.get(key);
           const kind = mine?.kind ?? thawKind ?? publicKind;
           if (kind === undefined) continue;
-          c.fillStyle = mine || thawKind !== undefined ? KIND_FILL[kind]! : COLORS.seen;
-          c.fillRect(px(x) + 0.5, py(y) + 0.5, cell - 1, cell - 1);
+          const lit = !!mine || thawKind !== undefined;
+          c.save();
+          if (lit && kind !== TileKind.CREVASSE) {
+            c.shadowColor = kind === TileKind.RELIC ? 'rgba(255, 207, 92, 0.8)' : 'rgba(232, 241, 251, 0.35)';
+            c.shadowBlur = kind === TileKind.RELIC ? 18 : 8;
+          }
+          c.fillStyle = lit ? KIND_FILL[kind]! : COLORS.seen;
+          roundRect(c, px(x) + 1, py(y) + 1, cell - 2, cell - 2, Math.max(2, cell * 0.18));
+          c.fill();
+          c.restore();
+          if (lit && kind === TileKind.CREVASSE) {
+            c.strokeStyle = 'rgba(143, 216, 255, 0.5)';
+            c.lineWidth = 1;
+            roundRect(c, px(x) + 1.5, py(y) + 1.5, cell - 3, cell - 3, Math.max(2, cell * 0.18));
+            c.stroke();
+          }
           if (kind !== TileKind.SNOW) {
-            c.fillStyle = kind === TileKind.CREVASSE ? '#f4f7fb' : '#1d2433';
+            c.fillStyle = kind === TileKind.CREVASSE ? '#8fd8ff' : lit ? '#0b1017' : '#5b6577';
             c.font = `600 ${fontPx}px system-ui, sans-serif`;
             c.fillText(KIND_LABEL[kind]!, px(x) + cell / 2, py(y) + cell / 2);
           }
           if (mine) {
             // Clues: warmth (top-left) and hazards (bottom-right).
             c.font = `600 ${fontPx * 0.7}px system-ui, sans-serif`;
-            c.fillStyle = `hsl(${220 - mine.warmth * 40}, 70%, 42%)`;
+            c.fillStyle = `hsl(${205 - mine.warmth * 35}, 75%, 40%)`;
             c.fillText(String(mine.warmth), px(x) + cell * 0.27, py(y) + cell * 0.28);
             if (mine.hazards > 0) {
-              c.fillStyle = '#c0392b';
+              c.fillStyle = '#e5484d';
               c.fillText(String(mine.hazards), px(x) + cell * 0.73, py(y) + cell * 0.74);
             }
           }
         }
 
       // Base camp line.
-      c.strokeStyle = '#6b7c96';
+      c.strokeStyle = COLORS.base;
       c.lineWidth = 2;
       c.beginPath();
       c.moveTo(0, size - 1);
@@ -125,8 +154,8 @@ export function Mountain(p: MountainProps) {
       c.stroke();
 
       if (p.relic && (!p.thaw || p.relic[1] < thawRows)) {
-        c.strokeStyle = '#d4a017';
-        c.lineWidth = 3;
+        c.strokeStyle = '#ffcf5c';
+        c.lineWidth = 2;
         c.strokeRect(px(p.relic[0]) + 1.5, py(p.relic[1]) + 1.5, cell - 3, cell - 3);
       }
 
@@ -140,14 +169,14 @@ export function Mountain(p: MountainProps) {
       if (p.me) {
         if (p.me.pending && p.revealing) {
           spin.current = (spin.current + 0.12) % (Math.PI * 2);
-          c.strokeStyle = '#2f6fd1';
+          c.strokeStyle = '#8fd8ff';
           c.lineWidth = 2.5;
           c.beginPath();
           c.arc(px(p.me.pending.x) + cell / 2, py(p.me.pending.y) + cell / 2, cell * 0.42, spin.current, spin.current + 4);
           c.stroke();
         }
         if (p.me.vision > 0) {
-          c.strokeStyle = 'rgba(47,111,209,0.6)';
+          c.strokeStyle = 'rgba(143,216,255,0.55)';
           c.lineWidth = 2;
           c.strokeRect(px(p.me.x - 1), py(p.me.y + 1), cell * 3, cell * 3);
         }
@@ -172,22 +201,38 @@ export function Mountain(p: MountainProps) {
 }
 
 function yeti(c: CanvasRenderingContext2D, x: number, y: number, cell: number, fill: string, frozen: boolean, own = false) {
-  const r = cell * (own ? 0.36 : 0.3);
+  const r = cell * (own ? 0.36 : 0.28);
+  c.save();
+  if (own) {
+    c.shadowColor = 'rgba(143, 216, 255, 0.9)';
+    c.shadowBlur = cell * 0.8;
+  }
   c.fillStyle = fill;
-  c.strokeStyle = own ? '#1d2433' : '#3d4a60';
-  c.lineWidth = own ? 2.5 : 1.5;
+  c.strokeStyle = own ? '#8fd8ff' : 'rgba(255,255,255,0.35)';
+  c.lineWidth = own ? 2 : 1;
   c.beginPath();
   c.arc(x, y, r, 0, Math.PI * 2);
   c.fill();
+  c.restore();
   c.stroke();
-  c.fillStyle = '#1d2433';
+  c.fillStyle = '#0b1017';
   c.beginPath();
-  c.arc(x - r * 0.35, y - r * 0.15, r * 0.13, 0, Math.PI * 2);
-  c.arc(x + r * 0.35, y - r * 0.15, r * 0.13, 0, Math.PI * 2);
+  c.arc(x - r * 0.35, y - r * 0.12, r * 0.13, 0, Math.PI * 2);
+  c.arc(x + r * 0.35, y - r * 0.12, r * 0.13, 0, Math.PI * 2);
   c.fill();
   if (frozen) {
-    c.strokeStyle = '#2f6fd1';
+    c.strokeStyle = '#8fd8ff';
     c.lineWidth = 1.5;
     c.strokeRect(x - r, y - r, r * 2, r * 2);
   }
+}
+
+function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
 }

@@ -56,17 +56,33 @@ export async function listGameEvents(
   return { events: out, cursor };
 }
 
-/** Every lobby or hunt ever created by this package, newest first. */
+/**
+ * Lobbies and hunts created by this package, newest first. Public full nodes prune old
+ * checkpoints, and a descending scan that runs past the pruned edge errors, so this
+ * falls back to an ascending scan from the earliest checkpoint the node still has.
+ */
 export async function listGames(client: Client, packageId: string, limit = 50): Promise<string[]> {
-  const res = await client.core.listEvents({
-    filter: { eventType: `${packageId}::game::LobbyCreated` },
-    limit,
-    order: 'descending',
-  });
-  return res.events
-    .map((e) => parseEvent(packageId, e))
-    .filter((e): e is GameEvent => !!e && e.name === 'LobbyCreated')
-    .map((e) => (e.data as { game_id: string }).game_id);
+  const type = `${packageId}::game::LobbyCreated`;
+  const ids = (events: Array<{ eventType: string; bcs: Uint8Array }>) =>
+    events
+      .map((e) => parseEvent(packageId, e))
+      .filter((e): e is GameEvent => !!e && e.name === 'LobbyCreated')
+      .map((e) => (e.data as { game_id: string }).game_id);
+  try {
+    const res = await client.core.listEvents({ filter: { eventType: type }, limit, order: 'descending' });
+    return ids(res.events);
+  } catch (e) {
+    if (!/earliest available|pruned|below/i.test((e as Error).message)) throw e;
+  }
+  const found: string[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const res = await client.core.listEvents({ filter: { eventType: type }, limit: 50, ...(after ? { after } : {}) });
+    found.push(...ids(res.events));
+    after = res.endCursor ?? after;
+    if (!res.hasNextPage) break;
+  }
+  return found.reverse().slice(0, limit);
 }
 
 export function sameId(a: string, b: string): boolean {

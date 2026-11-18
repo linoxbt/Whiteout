@@ -26,21 +26,44 @@ export function Hunt({ gameId, mode }: { gameId: string; mode?: string }) {
   const g = v.game;
   const now = hunt.now();
   const badge = dealerBadge(g.dealerKind);
+  const isLive = g.status === GameStatus.OPEN && now < g.endsAt;
   const header = (
     <div className="hunt-head">
-      <div className="row">
-        <a href="#/">← Hunts</a>
-        <span className={`badge ${badge.tone}`}>{badge.text}</span>
-        <a href={`#/hunt/${gameId}/verify`}>Verify</a>
+      <div className="crumbs">
+        <a href="#/">← All hunts</a>
+        <span className="row" style={{ gap: 8 }}>
+          <span className={`badge ${badge.tone}`}>{badge.text}</span>
+          <a className="pill" href={`#/hunt/${gameId}/verify`}>Verify ↗</a>
+          {mode !== 'spectate' && <a className="pill" href={`#/hunt/${gameId}/spectate`}>Spectate</a>}
+        </span>
       </div>
-      <div className="row small">
-        <span>{statusLabel(g, now)}</span>
-        {g.status === GameStatus.OPEN && now < g.endsAt && <span>{timeLeft(g.endsAt - now)} left</span>}
-        <span>Pot {amount(g.pot, g.coinType)}</span>
-        <span>{g.playerCount} yetis</span>
+      <div className="strip">
+        <div>
+          <div className="stat-label">Status</div>
+          <div className="stat-value" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className={`dot ${isLive ? 'live' : ''}`} />
+            {statusLabel(g, now)}
+          </div>
+        </div>
+        <div>
+          <div className="stat-label">{isLive ? 'Time left' : 'Ended'}</div>
+          <div className="stat-value">{isLive ? timeLeft(g.endsAt - now) : '—'}</div>
+        </div>
+        <div>
+          <div className="stat-label">Pot</div>
+          <div className="stat-value">{amount(g.pot, g.coinType)}</div>
+        </div>
+        <div>
+          <div className="stat-label">Yetis</div>
+          <div className="stat-value">
+            {g.playerCount}/{g.maxPlayers}
+          </div>
+        </div>
       </div>
       {v.error && <div className="banner error" role="alert">Network trouble: retrying. Actions are paused.</div>}
-      {g.dealerKind === 2 && <div className="banner warn">This hunt was dealt by its host, who could know the map. It is free to enter.</div>}
+      {g.dealerKind === 2 && (
+        <div className="banner warn">This hunt was dealt by its host, who could know the map. It is free to enter.</div>
+      )}
     </div>
   );
 
@@ -82,11 +105,30 @@ function AuthNotice({ text }: { text: string }) {
 
 function Login({ v }: { v: HuntView }) {
   return (
-    <section className="card center">
-      <h2>Join the hunt</h2>
-      <p>Play with Google (no crypto needed) or connect a Sui wallet.</p>
-      <ConnectButton />
-      <p className="small"><a href={`#/hunt/${v.game!.id}/spectate`}>Just watch</a></p>
+    <div className="lobby-grid">
+      <section className="card">
+        <span className="eyebrow">Join the hunt</span>
+        <h2 style={{ marginTop: 8 }}>Step onto the mountain</h2>
+        <p className="small" style={{ lineHeight: 1.6 }}>
+          Play with Google, no crypto needed, gas is on us. Or connect any Sui wallet.
+        </p>
+        <div className="actions">
+          <ConnectButton />
+          <a className="btn" href={`#/hunt/${v.game!.id}/spectate`}>Just watch</a>
+        </div>
+      </section>
+      <MiniTrail v={v} />
+    </div>
+  );
+}
+
+function MiniTrail({ v }: { v: HuntView }) {
+  return (
+    <section className="card" style={{ padding: 14 }}>
+      <Mountain trail={v.trail} me={null} address={null} tiles={new Map()} revealing={null} label="Public trail of the hunt" />
+      <p className="small center" style={{ margin: '8px 0 0' }}>
+        {v.trail.explorers.size} yetis · {v.trail.resolved.size} tiles walked
+      </p>
     </section>
   );
 }
@@ -98,31 +140,53 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
     if (v.integrity === 'unknown') void hunt.checkIntegrity();
   }, [hunt, v.integrity]);
   if (!hunt.live) return <p className="empty">Joining is closed.</p>;
+  const pct = Math.round((v.integrityProgress / 576) * 100);
   return (
-    <section className="card">
-      <h2>How it works</h2>
-      <ol className="rules">
-        <li>Your yeti starts at base camp, at the bottom of the mountain.</li>
-        <li>Each step reveals only the tile you land on. The number shows how warm you are (5 = within 2 tiles of the relic).</li>
-        <li>The red number counts crevasses next to you. Step on one without a rope and your yeti freezes.</li>
-        <li>Goggles let you see one tile further for 10 steps. Ropes carry you over one crevasse.</li>
-        <li>First to reach the frozen relic wins the prize and the pot.</li>
-      </ol>
-      <p>
-        Entry stake: <strong>{g.entryStake === 0n ? 'free' : amount(g.entryStake, g.coinType)}</strong>. If you freeze,
-        half goes to the Lofi well fund and half to the pot. Otherwise you get it back when the hunt ends.
-      </p>
-      <label className="column-picker">
-        Base camp column: <strong>{column + 1}</strong>
-        <input type="range" min={0} max={GRID - 1} value={column} onChange={(e) => setColumn(Number(e.target.value))} aria-label="Base camp column" />
-      </label>
-      {v.integrity === 'checking' && <p className="small">Checking the hunt's integrity… {v.integrityProgress}/576</p>}
-      {v.integrity === 'failed' && <div className="banner error">This hunt failed its integrity check. Do not join.</div>}
-      <button className="primary" disabled={v.busy || v.integrity !== 'ok'} onClick={() => void hunt.join(column)}>
-        {v.busy ? 'Joining…' : 'Join'}
-      </button>
-      {v.notice && <p className={`notice ${v.notice.kind}`}>{v.notice.text}</p>}
-    </section>
+    <div className="lobby-grid">
+      <section className="card">
+        <span className="eyebrow">How to play</span>
+        <h2 style={{ marginTop: 8 }}>Find the frozen relic</h2>
+        <ol className="rules">
+          <li>Your yeti starts at base camp, at the bottom of the mountain.</li>
+          <li>Each step reveals only the tile you land on. Warmth tells you how close the relic is: 5 means within 2 tiles.</li>
+          <li>The red number counts crevasses next to you. Step on one without a rope and your yeti freezes.</li>
+          <li>Goggles let you see one tile further for 10 steps. A rope carries you over one crevasse.</li>
+          <li>First to reach the relic wins the prize and the whole pot.</li>
+        </ol>
+      </section>
+      <section className="card">
+        <span className="eyebrow">Your entry</span>
+        <div className="kv" style={{ borderTop: 0, paddingTop: 0, marginTop: 12 }}>
+          <div>
+            <span className="k">Stake</span>
+            <span className="v">{g.entryStake === 0n ? 'Free' : amount(g.entryStake, g.coinType)}</span>
+          </div>
+          <div>
+            <span className="k">If you freeze</span>
+            <span className="v">½ wells · ½ pot</span>
+          </div>
+        </div>
+        <label className="column-picker">
+          <span className="row">
+            <span className="small">Base camp column</span>
+            <span className="mono" style={{ fontSize: '1rem' }}>{String(column + 1).padStart(2, '0')}</span>
+          </span>
+          <input type="range" min={0} max={GRID - 1} value={column} onChange={(e) => setColumn(Number(e.target.value))} aria-label="Base camp column" />
+        </label>
+        {v.integrity === 'checking' && (
+          <>
+            <p className="small" style={{ margin: 0 }}>Checking the hunt's integrity… {v.integrityProgress}/576</p>
+            <div className="progress"><i style={{ width: `${pct}%` }} /></div>
+          </>
+        )}
+        {v.integrity === 'ok' && <p className="small" style={{ color: 'var(--good)', margin: '0 0 10px' }}>✓ All 576 tiles match what the dealer signed</p>}
+        {v.integrity === 'failed' && <div className="banner error">This hunt failed its integrity check. Do not join.</div>}
+        <button className="primary big" disabled={v.busy || v.integrity !== 'ok'} onClick={() => void hunt.join(column)}>
+          {v.busy ? 'Joining…' : 'Join the hunt'}
+        </button>
+        {v.notice && <div className={`notice ${v.notice.kind}`} onClick={() => hunt.dismissNotice()}>{v.notice.text}</div>}
+      </section>
+    </div>
   );
 }
 
@@ -162,63 +226,100 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
     : `You are at column ${me.x + 1}, row ${me.y + 1}.`;
 
   return (
-    <section className="play">
-      <Mountain trail={v.trail} me={me} address={hunt.address} tiles={v.tiles} revealing={v.revealing} label={description} />
-      <p className="sr-only" aria-live="polite">{description}</p>
-
-      <div className="hud">
-        <div className="items" aria-label="Items">
-          <span title="Goggles">👓 {me.visionSteps > 0 ? `${me.visionSteps} steps` : '—'}</span>
-          <span title="Ropes">🪢 {me.ropes}/3</span>
-          <span title="Stake">Stake {amount(me.stake, g.coinType)}</span>
-        </div>
-        {here && (
-          <div className="here">
-            <strong>{kindName(here.kind)}</strong> · warmth {here.warmth} ({warmthWord(here.warmth)}) · {here.hazards} crevasse{here.hazards === 1 ? '' : 's'} near
-          </div>
-        )}
+    <section className="play-layout">
+      <div>
+        <Mountain trail={v.trail} me={me} address={hunt.address} tiles={v.tiles} revealing={v.revealing} label={description} />
+        <p className="sr-only" aria-live="polite">{description}</p>
       </div>
 
-      {me.pending && (
-        <div className={`banner ${deadlineLeft < 60_000 ? 'error' : 'info'}`} role="status">
-          {pendingTile ? `Revealed: ${kindName(pendingTile.kind)}.` : 'Thawing…'} Reveal in progress, {timeLeft(deadlineLeft)} left.
-          {deadlineLeft < 60_000 && <button onClick={() => void hunt.resolveNow()}>Retry</button>}
+      <aside className="side">
+        <div className="card">
+          <span className="eyebrow">You are here</span>
+          <div className="here" style={{ marginTop: 10 }}>
+            <div className="tile-chip">{here ? (KIND_GLYPH[here.kind] ?? '') || here.warmth : '?'}</div>
+            <div className="meta">
+              <strong>{here ? kindName(here.kind) : 'In the fog'}</strong>
+              <span className="small mono">
+                col {String(me.x + 1).padStart(2, '0')} · row {String(me.y + 1).padStart(2, '0')}
+              </span>
+              {here && (
+                <>
+                  <div className="meter" aria-label={`Warmth ${here.warmth} of 5`}>
+                    {[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= here.warmth ? 'on' : ''} />)}
+                  </div>
+                  <span className="small">
+                    {warmthWord(here.warmth)} · <span style={{ color: here.hazards ? 'var(--danger)' : undefined }}>{here.hazards} crevasse{here.hazards === 1 ? '' : 's'} near</span>
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
         </div>
-      )}
 
-      {pendingTile?.kind === TileKind.RELIC && hunt.live && (
-        <button className="primary big" disabled={v.busy} onClick={() => void hunt.resolveNow()}>
-          Claim the frozen relic
-        </button>
-      )}
-
-      {frozen && (
-        <div className="banner freeze">
-          Your yeti fell into a crevasse and froze. You can keep watching. Half your stake went to the Lofi well fund, half to the pot.
+        <div className="items" aria-label="Items">
+          <div>
+            <div className="stat-label">Goggles</div>
+            <div className="stat-value" style={{ fontSize: '1rem' }}>{me.visionSteps > 0 ? `${me.visionSteps}` : '—'}</div>
+          </div>
+          <div>
+            <div className="stat-label">Ropes</div>
+            <div className="stat-value" style={{ fontSize: '1rem' }}>{me.ropes}/3</div>
+          </div>
+          <div>
+            <div className="stat-label">Stake</div>
+            <div className="stat-value" style={{ fontSize: '1rem' }}>{me.stake === 0n ? '0' : amount(me.stake, g.coinType).split(' ')[0]}</div>
+          </div>
         </div>
-      )}
-      {finder && <div className="banner relic">You found the frozen relic! The prize and the pot are yours.</div>}
 
-      {!frozen && !finder && (
-        <div className="dpad" aria-label="Move">
-          <button aria-label="North" onClick={() => move(Direction.NORTH)} disabled={!canStep}>▲</button>
-          <button aria-label="West" onClick={() => move(Direction.WEST)} disabled={!canStep}>◀</button>
-          <Cooldown ms={cooldown} busy={v.busy} />
-          <button aria-label="East" onClick={() => move(Direction.EAST)} disabled={!canStep}>▶</button>
-          <button aria-label="South" onClick={() => move(Direction.SOUTH)} disabled={!canStep}>▼</button>
-        </div>
-      )}
+        {me.pending && (
+          <div className={`banner ${deadlineLeft < 60_000 ? 'error' : 'info'}`} role="status">
+            <span>
+              {pendingTile ? `Revealed: ${kindName(pendingTile.kind)}` : 'Thawing…'}
+              <span className="mono" style={{ marginLeft: 8, opacity: 0.8 }}>{timeLeft(deadlineLeft)}</span>
+            </span>
+            {deadlineLeft < 60_000 && <button onClick={() => void hunt.resolveNow()}>Retry</button>}
+          </div>
+        )}
 
-      {v.notice?.kind === 'auth' && <AuthNotice text={v.notice.text} />}
+        {pendingTile?.kind === TileKind.RELIC && hunt.live && (
+          <button className="primary big" disabled={v.busy} onClick={() => void hunt.resolveNow()}>
+            Claim the frozen relic
+          </button>
+        )}
+
+        {frozen && (
+          <div className="banner freeze">
+            Your yeti fell into a crevasse and froze. Half your stake went to the Lofi well fund, half to the pot. You can keep watching.
+          </div>
+        )}
+        {finder && <div className="banner relic">You found the frozen relic! The prize and the pot are yours.</div>}
+
+        {!frozen && !finder && (
+          <div className="card" style={{ padding: 14 }}>
+            <div className="dpad" aria-label="Move">
+              <button aria-label="North" onClick={() => move(Direction.NORTH)} disabled={!canStep}>↑</button>
+              <button aria-label="West" onClick={() => move(Direction.WEST)} disabled={!canStep}>←</button>
+              <Cooldown ms={cooldown} busy={v.busy} />
+              <button aria-label="East" onClick={() => move(Direction.EAST)} disabled={!canStep}>→</button>
+              <button aria-label="South" onClick={() => move(Direction.SOUTH)} disabled={!canStep}>↓</button>
+            </div>
+            <p className="small center" style={{ margin: '6px 0 0' }}>Arrow keys or WASD</p>
+          </div>
+        )}
+
+        {v.notice?.kind === 'auth' && <AuthNotice text={v.notice.text} />}
+        <Overdue hunt={hunt} v={v} />
+      </aside>
       {v.notice && v.notice.kind !== 'auth' && (
         <div className={`notice ${v.notice.kind}`} role="status" onClick={() => hunt.dismissNotice()}>
           {v.notice.text}
         </div>
       )}
-      <Overdue hunt={hunt} v={v} />
     </section>
   );
 }
+
+const KIND_GLYPH: Record<number, string> = { 1: 'C', 2: 'G', 3: 'R', 4: '★' };
 
 function Cooldown({ ms, busy }: { ms: number; busy: boolean }) {
   const frac = Math.min(1, ms / 8000);
@@ -261,12 +362,22 @@ function Overdue({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
 function Spectate({ v }: { v: HuntView }) {
   const frozen = [...v.trail.explorers.values()].filter((e) => e.frozen).length;
   return (
-    <section>
+    <section className="play-layout">
       <Mountain trail={v.trail} me={null} address={null} tiles={new Map()} revealing={null} label="Public trail of the hunt" />
-      <p className="small">
-        {v.trail.explorers.size} yetis · {v.trail.resolved.size} tiles walked · {frozen} frozen
-        {v.trail.finder ? ` · relic found by ${v.trail.finder.slice(0, 10)}…` : ''}
-      </p>
+      <aside className="side">
+        <div className="card">
+          <span className="eyebrow">Public trail</span>
+          <p className="small" style={{ lineHeight: 1.6 }}>
+            Spectators see where every yeti is and what each walked-on tile turned out to be. Clues stay sealed until the thaw.
+          </p>
+          <div className="kv">
+            <div><span className="k">Yetis</span><span className="v">{v.trail.explorers.size}</span></div>
+            <div><span className="k">Tiles walked</span><span className="v">{v.trail.resolved.size}</span></div>
+            <div><span className="k">Frozen</span><span className="v">{frozen}</span></div>
+            <div><span className="k">Relic</span><span className="v">{v.trail.finder ? 'Found' : 'Hidden'}</span></div>
+          </div>
+        </div>
+      </aside>
     </section>
   );
 }

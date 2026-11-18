@@ -13,15 +13,16 @@ Built for CLAY Hackathon III. Design: *Whiteout — Build Specification v1.0*.
 
 | Part | Path | |
 | --- | --- | --- |
-| Move package: rules, escrow, Seal policy | `move/whiteout` | 111 Move tests |
+| Move package: rules, escrow, Seal policy, allowlists | `move/whiteout` | Move tests incl. Phase 2 acceptance |
 | Shared TypeScript core | `packages/core` | formats, map rules, deal, tx builders, chain reads |
 | Host CLI | `packages/cli` | create, deal, open, status, settle, thaw, verify, admin |
 | Sponsor service | `packages/sponsor` | gas for Google (zkLogin) players, Whiteout calls only |
-| Web client | `packages/web` | play, spectate, thaw, verify |
+| Web client | `packages/web` | play, spectate, thaw, verify, history, host console |
 | Dealer enclave (Rust, Nautilus) | `enclave/whiteout-dealer` | offline Seal encryption, pinned key servers |
 | End-to-end test | `e2e` | a full hunt on a local Sui network, in CI |
 
-See [docs/architecture.md](docs/architecture.md) for how the pieces fit,
+See [docs/phase-2.md](docs/phase-2.md) for ranked relics, holder gating, blizzards, the
+host console, history and alerts; [docs/architecture.md](docs/architecture.md) for how the pieces fit,
 [docs/deploy.md](docs/deploy.md) to deploy and run a hunt, and
 [docs/verify-a-hunt.md](docs/verify-a-hunt.md) for what anyone can check.
 

@@ -143,6 +143,9 @@ importers:
       '@mysten/sui':
         specifier: ^2.39.1
         version: 2.39.1(typescript@6.0.3)
+      '@noble/curves':
+        specifier: ^2.4.0
+        version: 2.4.0
       '@tanstack/react-query':
         specifier: ^5.108.0
         version: 5.108.0(@types/react@19.3.0)(react@19.3.1)

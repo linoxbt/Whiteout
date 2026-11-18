@@ -30,6 +30,9 @@ const WARM = ['#cfe0ee', '#9cc6e4', '#7fb6dd', '#e9c46a', '#e8a33d', '#de7f2c'];
 const px = (x: number) => x * P + 3;
 const py = (y: number) => (N - 1 - y) * P + 3;
 
+const THAWED = 'The hunt ends and the whole mountain thaws. Anyone can audit it.';
+const MESSAGES = [...new Set([...STEPS.map((s) => s.msg), THAWED])];
+
 export function TrailDemo() {
   const [i, setI] = useState(0);
   const total = STEPS.length + 3; // + hold, thaw, thaw
@@ -43,7 +46,7 @@ export function TrailDemo() {
   const seen = STEPS.slice(0, at + 1);
   const me = STEPS[at]!;
   const thawed = i >= STEPS.length;
-  const msg = thawed ? 'The hunt ends and the whole mountain thaws. Anyone can audit it.' : me.msg;
+  const msg = thawed ? THAWED : me.msg;
   const ropes = seen.some((s) => s.kind === 'rope') && !seen.some((s) => s.kind === 'crevasse') ? 1 : 0;
 
   return (
@@ -85,7 +88,14 @@ export function TrailDemo() {
       </div>
       <figcaption>
         <span className="tele ice">Step {String(Math.min(i + 1, STEPS.length)).padStart(2, '0')} / {String(STEPS.length).padStart(2, '0')}</span>
-        <span key={msg} className="td-msg">{msg}</span>
+        {/* Every message sits in one cell, so the card keeps the height of the longest. */}
+        <span className="td-msgs" aria-live="polite">
+          {MESSAGES.map((m) => (
+            <span key={m === msg ? `on:${m}` : m} className={`td-msg ${m === msg ? 'on' : ''}`} aria-hidden={m !== msg}>
+              {m}
+            </span>
+          ))}
+        </span>
         <span className="td-inv tele">
           Rope {ropes}/3 · Hazards {thawed ? '—' : (me.hz ?? 0)}
         </span>

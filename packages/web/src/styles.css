@@ -296,10 +296,10 @@ h3 { font-weight: 700; font-stretch: 106%; font-size: 1.12rem; text-transform: u
 @media (max-width: 560px) { .strip { grid-template-columns: repeat(2, 1fr); } .strip > div:nth-child(3) { border-left: 0; } .strip > div:nth-child(n + 3) { border-top: 1px solid var(--line); } }
 
 .play-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
-@media (max-width: 960px) { .play-layout { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .play-layout { grid-template-columns: minmax(0, 1fr); } }
 .side { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 100px; }
 .side .card { margin: 0; padding: 20px; }
-.mountain { width: 100%; display: flex; justify-content: center; }
+.mountain { width: 100%; min-width: 0; display: flex; justify-content: center; }
 .map-frame { position: relative; isolation: isolate; border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-lg); border: 4px solid #ffffff; line-height: 0; }
 .mountain canvas { display: block; touch-action: manipulation; }
 .map-frame .clouds { z-index: 1; opacity: 0.38; }
@@ -354,8 +354,10 @@ h3 { font-weight: 700; font-stretch: 106%; font-size: 1.12rem; text-transform: u
 .actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
 .payouts { list-style: none; padding: 0; margin: 14px 0; }
 .payouts li { padding: 12px 0; border-top: 1px solid var(--line); color: var(--ink-2); }
-.lobby-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; align-items: start; }
-@media (max-width: 860px) { .lobby-grid { grid-template-columns: 1fr; } }
+.lobby-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .lobby-grid { grid-template-columns: minmax(0, 1fr); } }
+/* Grid items default to min-width: auto, so a fixed-size canvas could hold a column open. */
+.lobby-grid > *, .play-layout > * { min-width: 0; }
 .progress { height: 4px; border-radius: 4px; background: rgba(16, 34, 51, 0.08); overflow: hidden; margin: 10px 0; }
 .progress i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--ice-2), var(--ice)); transition: width 0.4s var(--ease); }
 
@@ -459,7 +461,9 @@ h3 { font-weight: 700; font-stretch: 106%; font-size: 1.12rem; text-transform: u
 .td-halo { fill: rgba(90, 169, 220, 0.18); stroke: rgba(90, 169, 220, 0.55); stroke-width: 1.5; animation: halo 2.4s var(--ease) infinite; transform-box: fill-box; transform-origin: center; }
 @keyframes halo { 50% { transform: scale(1.12); opacity: 0.6; } }
 .trail-demo figcaption { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; align-items: baseline; padding: 18px 6px 2px; }
-.td-msg { font-size: 1.02rem; color: var(--ink); animation: route-in 0.5s var(--ease) backwards; grid-row: span 2; }
+.td-msgs { display: grid; grid-row: span 2; }
+.td-msg { grid-area: 1 / 1; font-size: 1.02rem; color: var(--ink); visibility: hidden; }
+.td-msg.on { visibility: visible; animation: route-in 0.5s var(--ease) backwards; }
 .td-inv { grid-column: 1; }
 
 /* ---------- Rewards ---------- */

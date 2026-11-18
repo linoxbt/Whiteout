@@ -91,7 +91,9 @@ export function Mountain(p: MountainProps) {
       const canvas = ref.current;
       const box = wrap.current;
       if (!canvas || !box) return;
-      const size = Math.min(box.clientWidth, 720);
+      // The frame's 4px border sits around the canvas: measure the room inside it, or
+      // each redraw would come out 8px wider than the last and the page would keep growing.
+      const size = Math.max(120, Math.min(Math.floor(box.clientWidth) - 8, 720));
       const dpr = window.devicePixelRatio || 1;
       if (canvas.width !== size * dpr) {
         canvas.width = size * dpr;

@@ -43,6 +43,10 @@ export function Mountain(p: MountainProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const spin = useRef(0);
+  // Motion state: when each tile first appeared, and the yeti's glide between tiles.
+  const born = useRef(new Map<string, number>());
+  const firstPaint = useRef(true);
+  const glide = useRef<{ fx: number; fy: number; tx: number; ty: number; t0: number } | null>(null);
   // The thaw sweeps up the mountain from base camp (spec section 11, Thaw screen).
   const [thawRows, setThawRows] = useState(0);
   useEffect(() => {
@@ -59,7 +63,24 @@ export function Mountain(p: MountainProps) {
 
   useEffect(() => {
     let raf = 0;
+    const now0 = performance.now();
+    for (const key of p.tiles.keys()) if (!born.current.has(key)) born.current.set(key, firstPaint.current ? 0 : now0);
+    if (p.thaw) for (let i = 0; i < GRID * GRID; i++) {
+      const key = `${i % GRID},${Math.floor(i / GRID)}`;
+      if (!born.current.has(key) && Math.floor(i / GRID) < thawRows) born.current.set(key, now0);
+    }
+    firstPaint.current = false;
+    if (p.me) {
+      const g = glide.current;
+      if (!g) glide.current = { fx: p.me.x, fy: p.me.y, tx: p.me.x, ty: p.me.y, t0: 0 };
+      else if (g.tx !== p.me.x || g.ty !== p.me.y) {
+        const k = easeOut(Math.min(1, (now0 - g.t0) / GLIDE_MS));
+        glide.current = { fx: g.fx + (g.tx - g.fx) * k, fy: g.fy + (g.ty - g.fy) * k, tx: p.me.x, ty: p.me.y, t0: now0 };
+      }
+    }
     const draw = () => {
+      const now = performance.now();
+      let moving = false;
       const canvas = ref.current;
       const box = wrap.current;
       if (!canvas || !box) return;
@@ -130,6 +151,17 @@ export function Mountain(p: MountainProps) {
           const tx = px(x) + 1;
           const ty = py(y) + 1;
           const ts = cell - 2;
+          const age = now - (born.current.get(key) ?? 0);
+          c.save();
+          if (age < POP_MS) {
+            moving = true;
+            const k = Math.max(0, age / POP_MS);
+            const sc = 0.55 + 0.45 * backOut(k);
+            c.globalAlpha = Math.min(1, k * 2.2);
+            c.translate(tx + ts / 2, ty + ts / 2);
+            c.scale(sc, sc);
+            c.translate(-(tx + ts / 2), -(ty + ts / 2));
+          }
           c.save();
           if (lit && kind !== TileKind.CREVASSE) {
             c.shadowColor = kind === TileKind.RELIC ? 'rgba(227, 168, 47, 0.8)' : 'rgba(30, 60, 90, 0.16)';
@@ -159,6 +191,7 @@ export function Mountain(p: MountainProps) {
               c.fillText(String(mine.hazards), tx + ts - r * 0.55, ty + r * 0.6);
             }
           }
+          c.restore();
         }
 
       // Base camp line.
@@ -197,9 +230,21 @@ export function Mountain(p: MountainProps) {
           c.lineWidth = 2;
           c.strokeRect(px(p.me.x - 1), py(p.me.y + 1), cell * 3, cell * 3);
         }
-        yeti(c, px(p.me.x) + cell / 2, py(p.me.y) + cell / 2, cell, p.me.status === 1 ? '#a9c7de' : '#16324a', p.me.status === 1, true);
+        const g = glide.current;
+        let gx = p.me.x;
+        let gy = p.me.y;
+        let hop = 0;
+        if (g) {
+          const k = Math.min(1, (now - g.t0) / GLIDE_MS);
+          if (k < 1) moving = true;
+          const e = easeOut(k);
+          gx = g.fx + (g.tx - g.fx) * e;
+          gy = g.fy + (g.ty - g.fy) * e;
+          hop = Math.sin(Math.PI * k) * cell * 0.18;
+        }
+        yeti(c, px(gx) + cell / 2, py(gy) + cell / 2 - hop, cell, p.me.status === 1 ? '#a9c7de' : '#16324a', p.me.status === 1, true);
       }
-      if (p.revealing) raf = requestAnimationFrame(draw);
+      if (p.revealing || moving) raf = requestAnimationFrame(draw);
     };
     draw();
     const onResize = () => draw();
@@ -256,6 +301,11 @@ function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number,
   c.arcTo(x, y, x + w, y, r);
   c.closePath();
 }
+
+const GLIDE_MS = 420;
+const POP_MS = 520;
+const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+const backOut = (t: number) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
 
 /** Tile glyphs: a cracked crevasse, goggles, a coiled rope, and the relic diamond. */
 function glyph(c: CanvasRenderingContext2D, kind: number, x: number, y: number, s: number, lit: boolean) {

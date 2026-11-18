@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TILE_COUNT, getGame, listGames, type GameState } from '@whiteout/core';
 import { Backdrop, Clouds, Snowfall } from '../components/Backdrop';
 import { Mark } from '../components/Logo';
 import { TrailDemo } from '../components/TrailDemo';
-import { CountUp } from '../lib/motion';
+import { CountUp, Disclosure, Words, scrollToId } from '../lib/motion';
 import { config, configured, suiClient } from '../config';
 import { amount, dealerBadge, shortId, statusLabel, timeLeft } from '../lib/format';
 import { useTick } from '../lib/useHunt';
@@ -89,7 +89,9 @@ export function Home() {
   const yetis = live.reduce((n, g) => n + g.playerCount, 0);
   const pot = live.reduce((n, g) => n + g.pot, 0n);
   const first = live[0];
-  const go = (id: string) => (e: React.MouseEvent) => (e.preventDefault(), document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }));
+  const go = (id: string) => (e: React.MouseEvent) => (e.preventDefault(), scrollToId(id));
+  const heroInner = useRef<HTMLDivElement>(null);
+  useHeroScroll(heroInner);
 
   return (
     <>
@@ -98,25 +100,25 @@ export function Home() {
         <Clouds seed={7} count={9} />
         <Snowfall />
         <span className="coords tele">27°59′N / 86°55′E — {TILE_COUNT} tiles sealed</span>
-        <div className="wrap hero-inner">
-          <span className="tele ice">An expedition on Sui / {new Date().getFullYear()}</span>
-          <h1>
-            White
+        <div className="wrap hero-inner" ref={heroInner}>
+          <span className="tele ice hero-kicker">An expedition on Sui / {new Date().getFullYear()}</span>
+          <h1 data-reveal="words">
+            <Words text="White" letters />
             <br />
-            <span className="thin">out</span>
+            <span className="thin"><Words text="out" letters from={5} /></span>
           </h1>
           <p className="tagline">The relic is still out there. Nobody knows where.</p>
           <div className="cta">
             {first ? (
-              <a className="btn primary arrow" href={`#/hunt/${first.id}`}>
+              <a className="btn primary arrow magnetic" href={`#/hunt/${first.id}`}>
                 Join the hunt
               </a>
             ) : (
-              <a className="btn primary arrow" href="#expeditions" onClick={go('expeditions')}>
+              <a className="btn primary arrow magnetic" href="#expeditions" onClick={go('expeditions')}>
                 See expeditions
               </a>
             )}
-            <a className="btn arrow" href="#field-guide" onClick={go('field-guide')}>
+            <a className="btn arrow magnetic" href="#field-guide" onClick={go('field-guide')}>
               Field guide
             </a>
           </div>
@@ -138,7 +140,7 @@ export function Home() {
             <span key={k}>
               {TICKER.map((t) => (
                 <span key={t} className="tele">
-                  <Mark size={14} /> {t}
+                  <Mark size={14} animate={false} /> {t}
                 </span>
               ))}
             </span>
@@ -150,12 +152,12 @@ export function Home() {
         <section className="section" id="how">
           <div className="how">
             <div className="how-copy">
-              <div data-reveal>
+              <div data-reveal="words">
                 <span className="tele ice">How to play / 01</span>
                 <h2 style={{ marginTop: 14 }}>
-                  Read the snow.
+                  <Words text="Read the snow." />
                   <br />
-                  <span className="accent">Follow the warmth.</span>
+                  <span className="accent"><Words text="Follow the warmth." from={3} /></span>
                 </h2>
               </div>
               <ol className="steps">
@@ -170,7 +172,7 @@ export function Home() {
                 ))}
               </ol>
             </div>
-            <div className="how-demo" data-reveal data-delay="150">
+            <div className="how-demo tilt-soft" data-reveal data-delay="150">
               <TrailDemo />
             </div>
           </div>
@@ -178,12 +180,12 @@ export function Home() {
 
         <section className="section" id="expeditions">
           <div className="split">
-            <div className="intro" data-reveal>
+            <div className="intro" data-reveal="words">
               <span className="tele ice">Expeditions / 02</span>
               <h2 style={{ marginTop: 14 }}>
-                A mountain that
+                <Words text="A mountain that" />
                 <br />
-                <span className="accent">keeps secrets</span>.
+                <span className="accent"><Words text="keeps secrets." from={3} /></span>
               </h2>
               <p>
                 Every hunt is a fresh 24 × 24 mountain, dealt in the dark. Each tile is sealed: you can read only the
@@ -244,8 +246,8 @@ export function Home() {
         </section>
 
         <section className="section" id="field-guide">
-          <div className="section-head" data-reveal>
-            <h2>Field guide</h2>
+          <div className="section-head" data-reveal="words">
+            <h2><Words text="Field guide" /></h2>
             <span className="tele">What lies under the snow / 03</span>
           </div>
           <ol className="field-guide">
@@ -260,14 +262,14 @@ export function Home() {
         </section>
 
         <section className="section" id="rewards">
-          <div className="section-head" data-reveal>
+          <div className="section-head" data-reveal="words">
             <h2>
-              Every stake <span className="accent">goes somewhere</span>
+              <Words text="Every stake" /> <span className="accent"><Words text="goes somewhere" from={2} /></span>
             </h2>
             <span className="tele">Rewards / 04</span>
           </div>
           <div className="rewards">
-            <div className="reward finder" data-reveal>
+            <div className="reward finder tilt" data-reveal>
               <span className="tele">The finder</span>
               <div className="reward-figure">
                 <span>Prize</span>
@@ -278,7 +280,7 @@ export function Home() {
               </div>
               <p>The first yeti to stand on the relic and prove it ends the hunt. The prize object, the whole pot and its own stake go to that player in one transaction.</p>
             </div>
-            <div className="reward" data-reveal data-delay="110">
+            <div className="reward tilt" data-reveal data-delay="110">
               <span className="tele">A frozen yeti</span>
               <div className="split-bar" aria-label="Half to the well fund, half to the pot">
                 <i className="wells"><b>50%</b> Well fund</i>
@@ -286,7 +288,7 @@ export function Home() {
               </div>
               <p>Step into a crevasse with no rope and your yeti freezes. Half its stake goes to the Lofi water-well fund at once; the other half grows the pot for whoever finds the relic.</p>
             </div>
-            <div className="reward" data-reveal data-delay="220">
+            <div className="reward tilt" data-reveal data-delay="220">
               <span className="tele">Nobody finds it</span>
               <ul className="reward-list">
                 <li><b>Pot</b> goes to the well fund</li>
@@ -299,9 +301,9 @@ export function Home() {
         </section>
 
         <section className="section" id="protocol">
-          <div className="section-head" data-reveal>
+          <div className="section-head" data-reveal="words">
             <h2>
-              No game <span className="accent">master</span>
+              <Words text="No game" /> <span className="accent"><Words text="master" from={2} /></span>
             </h2>
             <span className="tele">Protocol / 05</span>
           </div>
@@ -311,7 +313,7 @@ export function Home() {
           </p>
           <ol className="pipeline">
             {PIPELINE.map((p, i) => (
-              <li key={p.name} data-reveal data-delay={i * 100}>
+              <li key={p.name} className="tilt" data-reveal data-delay={i * 100}>
                 <div className="pipe-icon">{p.icon()}</div>
                 <span className="tele ice">{p.name}</span>
                 <h3>{p.title}</h3>
@@ -323,20 +325,19 @@ export function Home() {
 
         <section className="section" id="faq">
           <div className="faq-grid">
-            <div data-reveal>
+            <div data-reveal="words">
               <span className="tele ice">Questions / 06</span>
               <h2 style={{ marginTop: 14 }}>
-                Before you
+                <Words text="Before you" />
                 <br />
-                <span className="accent">set out</span>
+                <span className="accent"><Words text="set out" from={2} /></span>
               </h2>
             </div>
             <div className="faq">
               {FAQ.map((f, i) => (
-                <details key={f.q} data-reveal data-delay={i * 60} open={i === 0}>
-                  <summary>{f.q}</summary>
+                <Disclosure key={f.q} title={f.q} defaultOpen={i === 0} data-reveal="" data-delay={String(i * 60)}>
                   <p>{f.a}</p>
-                </details>
+                </Disclosure>
               ))}
             </div>
           </div>
@@ -348,19 +349,19 @@ export function Home() {
             <Clouds seed={41} count={5} fog={false} top={[2, 30]} />
             <div className="cta-copy">
               <Mark size={44} />
-              <h2>
-                The mountain
+              <h2 data-reveal="words">
+                <Words text="The mountain" />
                 <br />
-                is <span className="accent">waiting</span>.
+                <Words text="is" from={2} /> <span className="accent"><Words text="waiting." from={3} /></span>
               </h2>
               <p>One relic. {TILE_COUNT} sealed tiles. Every step proven on Sui.</p>
               <div className="cta">
                 {first ? (
-                  <a className="btn primary arrow" href={`#/hunt/${first.id}`}>Join the hunt</a>
+                  <a className="btn primary arrow magnetic" href={`#/hunt/${first.id}`}>Join the hunt</a>
                 ) : (
-                  <a className="btn primary arrow" href="#expeditions" onClick={go('expeditions')}>See expeditions</a>
+                  <a className="btn primary arrow magnetic" href="#expeditions" onClick={go('expeditions')}>See expeditions</a>
                 )}
-                <a className="btn arrow" href="#how" onClick={go('how')}>How to play</a>
+                <a className="btn arrow magnetic" href="#how" onClick={go('how')}>How to play</a>
               </div>
             </div>
           </div>
@@ -375,7 +376,7 @@ function Expedition({ g, n, now, delay }: { g: GameState; n: number; now: number
   const isLive = g.status === 1 && now < g.endsAt;
   return (
     <li data-reveal data-delay={delay}>
-      <a className="exp-card" href={`#/hunt/${g.id}`}>
+      <a className="exp-card tilt" href={`#/hunt/${g.id}`}>
         <Backdrop seed={seedOf(g.id)} yeti={false} />
         <Clouds seed={seedOf(g.id)} count={3} fog={false} top={[4, 30]} />
         <div className="exp-top">
@@ -446,3 +447,29 @@ const SunIcon = () => (
     <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
   </svg>
 );
+
+/** The hero copy drifts up and fades as the page scrolls away from it. */
+function useHeroScroll(ref: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    let raf = 0;
+    const apply = () => {
+      raf = 0;
+      const el = ref.current;
+      if (!el) return;
+      const h = window.innerHeight;
+      const y = Math.min(window.scrollY, h);
+      el.style.transform = `translate3d(0, ${(y * -0.22).toFixed(1)}px, 0)`;
+      el.style.opacity = String(Math.max(0, 1 - y / (h * 0.75)).toFixed(3));
+    };
+    const on = () => {
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    window.addEventListener('scroll', on, { passive: true });
+    apply();
+    return () => {
+      window.removeEventListener('scroll', on);
+      cancelAnimationFrame(raf);
+    };
+  }, [ref]);
+}

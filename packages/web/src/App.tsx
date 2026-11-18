@@ -1,7 +1,7 @@
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
 import { useEffect, useRef, useState } from 'react';
 import { Logo } from './components/Logo';
-import { useRevealAll } from './lib/motion';
+import { scrollToId, scrollToTop, useActiveSection, usePointerFx, useRevealAll, useScrollDirection, useSmoothScroll } from './lib/motion';
 import { config } from './config';
 import { useRoute } from './lib/useHunt';
 import { Home } from './screens/Home';
@@ -16,22 +16,24 @@ const NAV: Array<[string, string]> = [
   ['faq', 'FAQ'],
 ];
 
-function scrollToId(id: string) {
-  setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 0);
-}
+const NAV_IDS = NAV.map(([id]) => id);
 
 export function App() {
   const route = useRoute();
   const home = route[0] !== 'hunt';
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const on = () => setScrolled(window.scrollY > 40);
-    on();
-    window.addEventListener('scroll', on, { passive: true });
-    return () => window.removeEventListener('scroll', on);
-  }, []);
+  useSmoothScroll();
+  usePointerFx();
+  const { down, scrolled } = useScrollDirection();
+  const active = useActiveSection(NAV_IDS, home);
   const key = route.join('/');
-  useEffect(() => window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior }), [key]);
+  useEffect(() => scrollToTop(true), [key]);
+  // A pill slides under the nav link of the section in view.
+  const navRef = useRef<HTMLElement>(null);
+  const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
+  useEffect(() => {
+    const a = active && navRef.current?.querySelector<HTMLElement>(`[data-id="${active}"]`);
+    setPill(a ? { x: a.offsetLeft, w: a.offsetWidth } : null);
+  }, [active]);
   const mainRef = useRef<HTMLElement>(null);
   useRevealAll(mainRef, key);
 
@@ -44,13 +46,14 @@ export function App() {
 
   return (
     <div className="app">
-      <header className={`top ${scrolled || !home ? 'solid' : ''}`}>
-        <a href="#/" className="brand" aria-label="Whiteout home" onClick={() => home && window.scrollTo({ top: 0, behavior: 'smooth' })}>
-          <Logo size={30} />
+      <header className={`top ${scrolled || !home ? 'solid' : ''} ${down ? 'tucked' : ''}`}>
+        <a href="#/" className="brand" aria-label="Whiteout home" onClick={() => home && scrollToTop()}>
+          <Logo size={32} />
         </a>
-        <nav>
+        <nav ref={navRef}>
+          <span className="nav-pill" style={pill ? { transform: `translateX(${pill.x}px)`, width: pill.w, opacity: 1 } : { opacity: 0 }} aria-hidden="true" />
           {NAV.map(([id, label]) => (
-            <a key={id} href="#/" onClick={() => scrollToId(id)}>{label}</a>
+            <a key={id} data-id={id} className={active === id ? 'active' : ''} href="#/" onClick={() => scrollToId(id)}>{label}</a>
           ))}
         </nav>
         <ConnectButton />

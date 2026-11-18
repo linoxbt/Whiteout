@@ -25,6 +25,7 @@ import {
   type Trail,
 } from '@whiteout/core';
 import { HuntTags, PrizeLadder, Weather } from '../components/Phase2';
+import { WalletHelp } from '../components/WalletHelp';
 import { config, configured, suiClient } from '../config';
 import { amount, dealerBadge, shortId, statusLabel, timeLeft } from '../lib/format';
 import {
@@ -76,6 +77,7 @@ export function Host({ gameId }: { gameId?: string }) {
             Hosting needs a Sui wallet with some SUI for gas and prizes. Host actions are never sponsored.
           </p>
           <ConnectButton />
+          <WalletHelp />
         </div>
       </section>
     );

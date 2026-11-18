@@ -14,6 +14,7 @@ import { Backdrop, Clouds } from '../components/Backdrop';
 import { Legend, Mountain } from '../components/Mountain';
 import { GateNotice, HuntTags, NotifyToggle, PrizeLadder, Weather } from '../components/Phase2';
 import { Mark } from '../components/Logo';
+import { WalletHelp } from '../components/WalletHelp';
 import type { Hunt as HuntModel, HuntView } from '../lib/hunt';
 import { amount, dealerBadge, kindName, shortId, statusLabel, timeLeft, warmthWord } from '../lib/format';
 import { useHunt, useTick } from '../lib/useHunt';
@@ -161,6 +162,7 @@ function Login({ v }: { v: HuntView }) {
           <ConnectButton />
           <a className="btn" href={`#/hunt/${v.game!.id}/spectate`}>Just watch</a>
         </div>
+        <WalletHelp />
         <ul className="facts">
           <li><span className="k">Entry</span><span>{v.game!.entryStake === 0n ? 'Free' : amount(v.game!.entryStake, v.game!.coinType)}</span></li>
           <li><span className="k">Pot so far</span><span>{amount(v.game!.pot, v.game!.coinType)}</span></li>

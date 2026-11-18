@@ -1,4 +1,6 @@
+import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
+import { WalletHelp } from './components/WalletHelp';
 import { useEffect, useRef, useState } from 'react';
 import { Logo } from './components/Logo';
 import { scrollToId, scrollToTop, useActiveSection, usePointerFx, useRevealAll, useScrollDirection, useSmoothScroll } from './lib/motion';
@@ -26,6 +28,7 @@ const NAV_IDS = NAV.map(([id]) => id);
 
 export function App() {
   const route = useRoute();
+  const account = useCurrentAccount();
   const section = route[0] ?? '';
   const home = section === '';
   useSmoothScroll();
@@ -74,6 +77,7 @@ export function App() {
             <a key={id} href={`#/${id}`} className={section === id ? 'active page-link' : 'page-link'}>{label}</a>
           ))}
         </nav>
+        {!account && <WalletHelp variant="icon" />}
         <ConnectButton />
       </header>
       <main ref={mainRef} key={key} className={`route ${home ? '' : 'page wrap'}`}>

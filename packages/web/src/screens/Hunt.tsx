@@ -1,6 +1,6 @@
 import { useCurrentAccount, useDAppKit } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Direction,
   ExplorerStatus,
@@ -21,6 +21,9 @@ import { useHunt, useTick } from '../lib/useHunt';
 import { makePreview, PREVIEW_ADDRESS } from '../lib/preview';
 import { Thaw } from './Thaw';
 import { config, googleLogin } from '../config';
+
+/** One shared empty map: a new Map each render would make the canvas redraw every tick. */
+const NO_TILES = new Map<string, never>();
 
 /** Design preview (#/hunt/preview-<state>): compiled in only when VITE_PREVIEW=1. */
 const PREVIEW = import.meta.env.VITE_PREVIEW === '1';
@@ -122,6 +125,13 @@ function HuntScreen({ hunt, v, gameId, mode, account }: { hunt: HuntModel; v: Hu
 
 /** Spec section 11, Session: one signature, explained before the wallet asks. */
 function SessionPrompt({ hunt }: { hunt: HuntModel }) {
+  const allow = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    allow.current?.focus();
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && hunt.declineSession();
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [hunt]);
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-labelledby="session-title">
       <div className="card">
@@ -132,7 +142,7 @@ function SessionPrompt({ hunt }: { hunt: HuntModel }) {
           ground under your yeti.
         </p>
         <div className="actions">
-          <button className="primary" onClick={() => hunt.grantSession()}>Allow</button>
+          <button ref={allow} className="primary" onClick={() => hunt.grantSession()}>Allow</button>
           <button onClick={() => hunt.declineSession()}>Not now</button>
         </div>
       </div>
@@ -181,7 +191,7 @@ function Login({ v }: { v: HuntView }) {
 function MiniTrail({ v }: { v: HuntView }) {
   return (
     <section className="card" style={{ padding: 14 }}>
-      <Mountain trail={v.trail} me={null} address={null} tiles={new Map()} revealing={null} label="Public trail of the hunt" />
+      <Mountain trail={v.trail} me={null} address={null} tiles={NO_TILES} revealing={null} label="Public trail of the hunt" />
       <p className="small center" style={{ margin: '8px 0 0' }}>
         {v.trail.explorers.size} yetis · {v.trail.resolved.size} tiles walked
       </p>
@@ -261,7 +271,11 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
           {v.busy ? 'Joining…' : 'Set out →'}
         </button>
         {g.relics > 1 && <div style={{ marginTop: 16 }}><PrizeLadder g={g} compact /></div>}
-        {v.notice && <div className={`notice ${v.notice.kind}`} onClick={() => hunt.dismissNotice()}>{v.notice.text}</div>}
+        {v.notice && (
+          <button type="button" className={`notice ${v.notice.kind}`} onClick={() => hunt.dismissNotice()} aria-label={`${v.notice.text} (dismiss)`}>
+            {v.notice.text}
+          </button>
+        )}
       </section>
     </div>
   );
@@ -286,14 +300,15 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
     };
     const on = (e: KeyboardEvent) => {
       const d = keys[e.key];
-      if (d !== undefined && !(e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        move(d);
-      }
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+      // Leave browser shortcuts (Ctrl/Cmd/Alt + key) and scrolling alone unless a step is possible.
+      if (d === undefined || typing || e.ctrlKey || e.metaKey || e.altKey || !canStep) return;
+      e.preventDefault();
+      move(d);
     };
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);
-  }, [move]);
+  }, [move, canStep]);
 
   const frozen = me.status === ExplorerStatus.FROZEN;
   const finder = me.status === ExplorerStatus.FINDER;
@@ -424,9 +439,9 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         <Overdue hunt={hunt} v={v} />
       </aside>
       {v.notice && v.notice.kind !== 'auth' && (
-        <div className={`notice ${v.notice.kind}`} role="status" onClick={() => hunt.dismissNotice()}>
+        <button type="button" className={`notice ${v.notice.kind}`} role="status" onClick={() => hunt.dismissNotice()} aria-label={`${v.notice.text} (dismiss)`}>
           {v.notice.text}
-        </div>
+        </button>
       )}
     </section>
   );
@@ -441,7 +456,7 @@ function seedOf(id: string) {
 function Cooldown({ ms, busy }: { ms: number; busy: boolean }) {
   const frac = Math.min(1, ms / 8000);
   return (
-    <div className="cooldown" aria-label={busy ? 'Moving' : ms ? `Ready in ${Math.ceil(ms / 1000)} s` : 'Ready'}>
+    <div className="cooldown" role="timer" aria-live="off" aria-label={busy ? 'Moving' : ms ? `Ready in ${Math.ceil(ms / 1000)} s` : 'Ready'}>
       <svg viewBox="0 0 36 36">
         <circle cx="18" cy="18" r="15" className="track" />
         <circle cx="18" cy="18" r="15" className="ring" strokeDasharray={`${(1 - frac) * 94.2} 94.2`} />
@@ -485,7 +500,7 @@ function Spectate({ v }: { v: HuntView }) {
           trail={v.trail}
           me={null}
           address={null}
-          tiles={new Map()}
+          tiles={NO_TILES}
           revealing={null}
           claimed={v.game?.claimed}
           drifts={v.game?.drifts}

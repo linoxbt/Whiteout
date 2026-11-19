@@ -20,6 +20,11 @@ export class TxError extends Error {
   }
 }
 
+/** Whether this wallet's transactions go through the sponsor (Google players). */
+export function willSponsor(wallet: UiWallet | null): boolean {
+  return !!wallet && isEnokiWallet(wallet) && !!config.sponsorUrl;
+}
+
 export async function run(transaction: Transaction, wallet: UiWallet | null, sender: string): Promise<string> {
   transaction.setSenderIfNotSet(sender);
   const sponsored = wallet && isEnokiWallet(wallet) && config.sponsorUrl;

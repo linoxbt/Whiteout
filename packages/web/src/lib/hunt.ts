@@ -42,7 +42,7 @@ import {
   type Trail,
 } from '@whiteout/core';
 import { config, suiClient } from '../config';
-import { run, TxError } from './exec';
+import { run, TxError, willSponsor } from './exec';
 import { kvGet, kvSet } from './store';
 import { createSession, hadSession, loadSession } from './session';
 import { notify } from './notify';
@@ -348,7 +348,7 @@ export class Hunt {
         throw new TxError(`This hunt is for members of "${this.view.allowlistName ?? 'its allowlist'}" only.`, null);
       }
       await run(
-        tx.join(this.ctx, { gameId: this.gameId, stake: game.entryStake, column, allowlistId: game.allowlist }),
+        tx.join(this.ctx, { gameId: this.gameId, stake: game.entryStake, column, allowlistId: game.allowlist, sponsored: willSponsor(this.wallet) }),
         this.wallet,
         this.address!,
       );

@@ -274,13 +274,21 @@ export function publishThaw(c: Ctx, p: { gameId: string; capId: string; blobId: 
  */
 export function join(
   c: Ctx,
-  p: { gameId: string; stake: bigint; column: number; allowlistId?: string | null },
+  p: {
+    gameId: string;
+    stake: bigint;
+    column: number;
+    allowlistId?: string | null;
+    /** False when the player pays their own gas: a SUI stake may then come from the gas coin too. */
+    sponsored?: boolean;
+  },
   tx = new Transaction(),
 ) {
+  const useGasCoin = p.sponsored === false && /::sui::SUI$/.test(c.coinType);
   const stake: TransactionArgument =
     p.stake === 0n
       ? tx.moveCall({ target: '0x2::coin::zero', typeArguments: [c.coinType] })
-      : tx.add(coinWithBalance({ type: c.coinType, balance: p.stake, useGasCoin: false }));
+      : tx.add(coinWithBalance({ type: c.coinType, balance: p.stake, useGasCoin }));
   if (p.allowlistId) {
     // Phase 2: a gated game takes its allowlist.
     tx.moveCall({

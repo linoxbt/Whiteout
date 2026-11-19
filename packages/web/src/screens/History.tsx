@@ -134,7 +134,13 @@ export function History() {
   );
   const shown = mine && account ? finished.filter(({ s }) => [...s.players].some((p) => sameId(p, account.address))) : finished;
   const totals = finished.reduce(
-    (t, { s }) => ({ hunts: t.hunts + 1, players: t.players + s.players.size, finds: t.finds + s.finders.length, well: t.well + s.toWell }),
+    // The total is in SUI, so it counts SUI hunts only.
+    (t, { g, s }) => ({
+      hunts: t.hunts + 1,
+      players: t.players + s.players.size,
+      finds: t.finds + s.finders.length,
+      well: t.well + (/::sui::SUI$/.test(g.coinType) ? s.toWell : 0n),
+    }),
     { hunts: 0, players: 0, finds: 0, well: 0n },
   );
 

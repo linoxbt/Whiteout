@@ -273,6 +273,7 @@ h3 { font-weight: 700; font-stretch: 106%; font-size: 1.12rem; text-transform: u
 .banner.freeze { background: var(--ice-soft); border-color: transparent; color: #17466a; }
 .banner.relic { background: var(--gold-soft); border-color: transparent; color: #6f4d0a; }
 .notice { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 40; max-width: min(92vw, 480px); padding: 14px 20px; cursor: pointer; font-size: 0.93rem; border-radius: 999px; background: rgba(16, 34, 51, 0.92); color: #ffffff; box-shadow: var(--shadow-lg); animation: rise 0.5s var(--ease); }
+button.notice { border: 0; font: inherit; font-size: 0.93rem; text-transform: none; letter-spacing: normal; text-align: left; line-height: 1.4; height: auto; min-height: 0; }
 .notice.error { background: rgba(140, 42, 34, 0.94); }
 .notice.relic { background: rgba(120, 82, 10, 0.94); }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 14px); } }

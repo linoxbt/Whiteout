@@ -6,7 +6,9 @@ describe('formatting', () => {
     expect(amount(1_500_000_000n, '0x2::sui::SUI')).toBe('1.5 SUI');
     expect(amount(1n, '0x2::sui::SUI')).toBe('0.000000001 SUI');
     expect(amount(0n, '0x2::sui::SUI')).toBe('0 SUI');
-    expect(amount(42n, '0xabc::lofi::LOFI')).toBe('42 LOFI');
+    // Another coin shows base units until its decimals are looked up.
+    expect(amount(42n, '0xabc::lofi::LOFI')).toBe('42 LOFI (base units)');
+    expect(amount(1_000_000_000n, '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI')).toBe('1 SUI');
   });
 
   it('formats countdowns', () => {

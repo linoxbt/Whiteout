@@ -15,7 +15,14 @@ function db(): Promise<IDBDatabase> {
   return dbp;
 }
 
+/** Recent values only: IndexedDB holds everything, this just saves a read. */
+const MEMORY_MAX = 2000;
 const memory = new Map<string, unknown>();
+function remember(key: string, value: unknown) {
+  memory.delete(key);
+  memory.set(key, value);
+  if (memory.size > MEMORY_MAX) memory.delete(memory.keys().next().value!);
+}
 
 export async function kvGet<T>(key: string): Promise<T | undefined> {
   if (memory.has(key)) return memory.get(key) as T;
@@ -32,7 +39,7 @@ export async function kvGet<T>(key: string): Promise<T | undefined> {
 }
 
 export async function kvSet(key: string, value: unknown): Promise<void> {
-  memory.set(key, value);
+  remember(key, value);
   try {
     const d = await db();
     await new Promise<void>((resolve, reject) => {

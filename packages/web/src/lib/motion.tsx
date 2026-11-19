@@ -63,23 +63,37 @@ const finePointer = () => !!window.matchMedia?.('(pointer: fine)').matches;
 
 /** Inertial smooth scrolling on desktop (touch keeps native momentum). */
 let lenis: import('lenis').default | null = null;
+let lenisRaf = 0;
+let idleFrames = 0;
+
+/** Runs Lenis frames until it has been still for a few frames, then stops. */
+function kickLenis() {
+  idleFrames = 0;
+  if (lenisRaf || !lenis) return;
+  const loop = (t: number) => {
+    if (!lenis) return void (lenisRaf = 0);
+    lenis.raf(t);
+    idleFrames = lenis.isScrolling ? 0 : idleFrames + 1;
+    lenisRaf = idleFrames > 30 ? 0 : requestAnimationFrame(loop);
+  };
+  lenisRaf = requestAnimationFrame(loop);
+}
 export function useSmoothScroll() {
   useEffect(() => {
     if (reduced() || !finePointer()) return;
-    let raf = 0;
     let stop = false;
+    const wake = () => kickLenis();
     void import('lenis').then(({ default: Lenis }) => {
       if (stop) return;
       lenis = new Lenis({ duration: 1.15, easing: (t) => 1 - Math.pow(1 - t, 4), wheelMultiplier: 0.95 });
-      const loop = (t: number) => {
-        lenis?.raf(t);
-        raf = requestAnimationFrame(loop);
-      };
-      raf = requestAnimationFrame(loop);
+      // The loop runs only while Lenis is moving: an idle page draws nothing.
+      for (const ev of ['wheel', 'touchstart', 'keydown', 'pointerdown']) window.addEventListener(ev, wake, { passive: true });
     });
     return () => {
       stop = true;
-      cancelAnimationFrame(raf);
+      for (const ev of ['wheel', 'touchstart', 'keydown', 'pointerdown']) window.removeEventListener(ev, wake);
+      cancelAnimationFrame(lenisRaf);
+      lenisRaf = 0;
       lenis?.destroy();
       lenis = null;
     };
@@ -91,13 +105,19 @@ export function scrollToId(id: string) {
   setTimeout(() => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (lenis) lenis.scrollTo(el, { offset: -90, duration: 1.4 });
+    if (lenis) {
+      lenis.scrollTo(el, { offset: -90, duration: 1.4 });
+      kickLenis();
+    }
     else window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 90, behavior: reduced() ? 'auto' : 'smooth' });
   }, 0);
 }
 
 export function scrollToTop(instant = false) {
-  if (lenis) lenis.scrollTo(0, { immediate: instant, duration: 1.2 });
+  if (lenis) {
+    lenis.scrollTo(0, { immediate: instant, duration: 1.2 });
+    kickLenis();
+  }
   else window.scrollTo({ top: 0, behavior: instant || reduced() ? 'auto' : 'smooth' });
 }
 
@@ -234,7 +254,7 @@ export function Disclosure({ title, children, defaultOpen = false, ...rest }: { 
         <span>{title}</span>
         <i aria-hidden="true" />
       </button>
-      <div className="disclosure-body" role="region" aria-hidden={!open}>
+      <div className="disclosure-body" role="region" aria-hidden={!open} inert={!open}>
         <div>{children}</div>
       </div>
     </div>

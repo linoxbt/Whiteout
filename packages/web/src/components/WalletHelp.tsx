@@ -70,7 +70,7 @@ export function WalletHelp({ variant = 'link' }: { variant?: 'link' | 'icon' }) 
 
 function WalletHelpDialog({ onClose }: { onClose: () => void }) {
   const [seen, setSeen] = useState<Seen>(scan);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'' | 'yes' | 'no'>('');
   const mobile = isMobile();
   const url = location.href;
   useEffect(() => {
@@ -88,7 +88,7 @@ function WalletHelpDialog({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-labelledby="wallet-help-title" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="card wallet-help">
-        <button className="close" onClick={onClose} aria-label="Close">×</button>
+        <button className="close" onClick={onClose} aria-label="Close" autoFocus>×</button>
         <h2 id="wallet-help-title">Wallet not listed?</h2>
 
         {mobile ? (
@@ -109,12 +109,18 @@ function WalletHelpDialog({ onClose }: { onClose: () => void }) {
             </p>
             <button
               onClick={async () => {
-                await navigator.clipboard?.writeText(url);
-                setCopied(true);
+                try {
+                  if (!navigator.clipboard) throw new Error('no clipboard');
+                  await navigator.clipboard.writeText(url);
+                  setCopied('yes');
+                } catch {
+                  setCopied('no');
+                }
               }}
             >
-              {copied ? 'Link copied' : 'Copy link'}
+              {copied === 'yes' ? 'Link copied' : 'Copy link'}
             </button>
+            {copied === 'no' && <p className="small">Copying is blocked here. Long-press this address instead: <code>{url}</code></p>}
           </>
         ) : (
           <>

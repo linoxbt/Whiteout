@@ -24,6 +24,8 @@ export interface NetworkConfig {
   walrusAggregators: string[];
   /** Testnet only: Mainnet has no public publisher (uploads go through the SDK or relay). */
   walrusPublisher?: string;
+  /** Testnet: public publishers tried in order (a public publisher can run out of WAL). */
+  walrusPublishers?: string[];
   walrusUploadRelay?: string;
   sponsorUrl?: string;
   enokiPublicKey?: string;
@@ -49,13 +51,24 @@ export const DEFAULTS: Record<'testnet' | 'mainnet', Omit<NetworkConfig, 'packag
       'https://walrus-testnet-aggregator.nodes.guru',
     ],
     walrusPublisher: 'https://publisher.walrus-testnet.walrus.space',
+    walrusPublishers: [
+      'https://publisher.walrus-testnet.walrus.space',
+      'https://wal-publisher-testnet.staketab.org',
+      'https://walrus-testnet-publisher.nodes.guru',
+      'https://walrus-testnet-publisher.stakely.io',
+      'https://walrus-publisher-testnet.n1stake.com',
+    ],
   },
   mainnet: {
     network: 'mainnet',
     rpcUrl: 'https://fullnode.mainnet.sui.io:443',
     sealServers: [], // Q2: providers, threshold and tier are chosen before Mainnet.
     sealThreshold: 2,
-    walrusAggregators: ['https://aggregator.walrus-mainnet.walrus.space'],
+    walrusAggregators: [
+      'https://aggregator.walrus-mainnet.walrus.space',
+      'https://wal-aggregator-mainnet.staketab.org',
+      'https://aggregator.walrus.banansen.dev',
+    ],
     walrusUploadRelay: 'https://upload-relay.mainnet.walrus.space',
   },
 };

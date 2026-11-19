@@ -229,7 +229,7 @@ async function upload(
   if (!config.walrusPublisher) throw new Error('This network has no public Walrus publisher: deal with the CLI.');
   onProgress('Uploading the Quilt to Walrus…');
   const epochs = Math.ceil((durationMs + 30 * 86_400_000) / 86_400_000) + 1;
-  const { quiltId } = await storeQuilt(config.walrusPublisher, tiles, epochs);
+  const { quiltId } = await storeQuilt(config.walrusPublishers ?? config.walrusPublisher, tiles, epochs);
   const stored: StoredDeal = { ...d, quiltId };
   await kvSet(`deal:${d.gameId}`, stored);
   onProgress(`Uploaded. Quilt ${quiltId.slice(0, 12)}…`);
@@ -267,6 +267,6 @@ export async function thawInBrowser(
   if (!check.ok) throw new Error(`thaw check failed: ${check.problems.slice(0, 3).join('; ')}`);
   if (!config.walrusPublisher) throw new Error('This network has no public Walrus publisher: thaw with the CLI.');
   onProgress('Publishing the thaw file…');
-  const blobId = await storeBlob(config.walrusPublisher, new TextEncoder().encode(JSON.stringify(file)), 31);
+  const blobId = await storeBlob(config.walrusPublishers ?? config.walrusPublisher, new TextEncoder().encode(JSON.stringify(file)), 31);
   return { blobId, relics: check.relics ?? [] };
 }

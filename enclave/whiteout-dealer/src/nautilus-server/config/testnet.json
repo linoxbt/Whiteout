@@ -1,6 +1,6 @@
 {
   "network": "testnet",
-  "package_id": "0x20ce305b503ca53bfbbc2ff620446d0e080d2d3e200e47ff2ad059c862984c2c",
+  "package_id": "0xa2ccda7c8479b551a78aecff79a9efca295cca172a6ca8d4315718e960aca52a",
   "threshold": 1,
   "key_servers": [
     {

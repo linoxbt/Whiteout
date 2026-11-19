@@ -158,7 +158,7 @@ const phases: Record<string, () => Promise<void>> = {
     const map = generateMap(seededRng(Date.now() & 0xffff), 2);
     const secretKey = (await import('@noble/curves/ed25519.js')).ed25519.utils.randomSecretKey();
     const out = await deal({ map, gameId, dealTs: BigInt(Date.now()), secretKey, encrypt: sealEncryptor(makeSealClient(client, cfg), cfg.packageId, cfg.sealThreshold) });
-    const { quiltId } = await storeQuilt(cfg.walrusPublisher!, out.tiles, 5);
+    const { quiltId } = await storeQuilt(cfg.walrusPublishers ?? cfg.walrusPublisher!, out.tiles, 5);
     const r = await exec(host, tx.sealDealCeremony(ctx, { gameId, capId, dealerPk: out.dealerPk, dealTs: out.dealTs, ctHash: out.ctHash, quiltId }));
     s.huntK = { ...s.huntK, capId, quiltId, map: toHex(map), relics: findRelics(map) };
     save(s);

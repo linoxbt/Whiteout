@@ -14,20 +14,20 @@ export interface QuiltUpload {
  * (MD11). Testnet only; Mainnet has no public publisher.
  */
 export async function storeQuilt(
-  publisher: string,
+  publisher: string | string[],
   tiles: Array<{ id: string; ct: Uint8Array }>,
   epochs: number,
   fetchFn: typeof fetch = fetch,
 ): Promise<QuiltUpload> {
   const form = new FormData();
   for (const t of tiles) form.append(t.id, new Blob([t.ct as BlobPart]), t.id);
-  const res = await withRetry(async () => {
-    const r = await fetchFn(`${publisher.replace(/\/$/, '')}/v1/quilts?epochs=${epochs}`, {
+  const res = await eachPublisher(publisher, async (base) => {
+    const r = await fetchFn(`${base}/v1/quilts?epochs=${epochs}`, {
       method: 'PUT',
       body: form,
       signal: AbortSignal.timeout(WRITE_TIMEOUT_MS),
     });
-    if (!r.ok) throw new Error(`Walrus publisher ${r.status}: ${await r.text()}`);
+    if (!r.ok) throw new Error(`Walrus publisher ${base} ${r.status}: ${(await r.text()).slice(0, 200)}`);
     return r.json() as Promise<WalrusStoreResponse>;
   });
   const blob = res.blobStoreResult?.newlyCreated?.blobObject ?? res.blobStoreResult?.alreadyCertified;
@@ -36,6 +36,23 @@ export async function storeQuilt(
   const endEpoch = (blob as { storage?: { endEpoch?: number }; endEpoch?: number } | undefined)?.storage?.endEpoch ??
     (blob as { endEpoch?: number } | undefined)?.endEpoch;
   return endEpoch === undefined ? { quiltId } : { quiltId, endEpoch };
+}
+
+/**
+ * Tries each publisher in turn (each with a short retry): a public publisher can be
+ * down or out of WAL. Throws the last error if all fail.
+ */
+async function eachPublisher<T>(publishers: string | string[], fn: (base: string) => Promise<T>): Promise<T> {
+  const list = (Array.isArray(publishers) ? publishers : [publishers]).map((p) => p.replace(/\/$/, ''));
+  let last: unknown = new Error('no Walrus publisher configured');
+  for (const base of list) {
+    try {
+      return await withRetry(() => fn(base), { tries: 2 });
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
 }
 
 interface WalrusStoreResponse {
@@ -47,18 +64,18 @@ interface WalrusStoreResponse {
 
 /** Stores one blob (the thaw file). */
 export async function storeBlob(
-  publisher: string,
+  publisher: string | string[],
   data: Uint8Array,
   epochs: number,
   fetchFn: typeof fetch = fetch,
 ): Promise<string> {
-  const r = await withRetry(async () => {
-    const res = await fetchFn(`${publisher.replace(/\/$/, '')}/v1/blobs?epochs=${epochs}`, {
+  const r = await eachPublisher(publisher, async (base) => {
+    const res = await fetchFn(`${base}/v1/blobs?epochs=${epochs}`, {
       method: 'PUT',
       body: data as BodyInit,
       signal: AbortSignal.timeout(WRITE_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`Walrus publisher ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Walrus publisher ${base} ${res.status}: ${(await res.text()).slice(0, 200)}`);
     return res.json() as Promise<{
       newlyCreated?: { blobObject?: { blobId?: string } };
       alreadyCertified?: { blobId?: string };

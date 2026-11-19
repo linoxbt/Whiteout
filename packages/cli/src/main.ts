@@ -18,7 +18,9 @@ import {
   MAX_RELICS,
   applyEvents,
   blizzardDue,
+  ciphertextServers,
   decryptTiles,
+  sameId,
   getAllowlist,
   getGame,
   emptyTrail,
@@ -278,6 +280,10 @@ program
     if (!rec.dealFile || !rec.quiltId) throw new Error('Run `whiteout deal` first.');
     const d: DealFile = JSON.parse(readFileSync(rec.dealFile, 'utf8'));
     checkDealFile(e, d);
+    // Read the uploaded Quilt back before the clock starts: players will check it.
+    const uploaded = await readAllTiles(e.cfg.walrusAggregators, rec.quiltId);
+    const { checkCiphertexts: matches } = await import('@whiteout/core');
+    if (!matches(uploaded, fromHex(d.ctHash))) throw new Error('The uploaded Quilt does not match the deal (ct_hash). Run `whiteout deal` again.');
     const ctx = ctxFor(e, rec.coinType);
     const common = { gameId: o.game, capId: rec.capId, dealTs: BigInt(d.dealTs), ctHash: fromHex(d.ctHash), quiltId: rec.quiltId };
     const t =
@@ -302,7 +308,10 @@ program
     let cursor: string | null = null;
     const trail = emptyTrail();
     let prev: WatchSample | null = null;
+    let failures = 0;
     for (;;) {
+      // A watcher must outlive one bad RPC answer: it reports repeated failures instead.
+      try {
       const { game, ctx } = await gameCtx(e, o.game);
       const page = await listGameEvents(e.client, e.cfg.packageId, o.game, cursor);
       cursor = page.cursor;
@@ -345,6 +354,13 @@ program
         if (isEnded(game, now) && game.status === GameStatus.OPEN) next(`whiteout finalize --game ${o.game}`);
         else if (isEnded(game, now)) next(`whiteout thaw --game ${o.game}`);
         return;
+      }
+      failures = 0;
+      } catch (err) {
+        if (!o.watch) throw err;
+        failures++;
+        console.error(`watch: ${(err as Error).message}`);
+        if (failures === 3) await alert(`[${o.game.slice(0, 10)}] The watcher failed 3 times in a row: ${(err as Error).message}`);
       }
       await new Promise((r) => setTimeout(r, 15_000));
     }
@@ -448,7 +464,7 @@ program
       console.log(`  decrypted ${tiles.length}/576`);
     }
     const file = thawFile(o.game, tiles);
-    const check = verifyThaw(file, o.game, game.dealerPk, game.dealTs);
+    const check = verifyThaw(file, o.game, game.dealerPk, game.dealTs, game.relics);
     if (!check.ok) throw new Error(`thaw check failed: ${check.problems.join('; ')}`);
     if (o.out) writeJson(o.out, file);
     const publisher = o.sdk ? undefined : (o.publisher ?? e.cfg.walrusPublisher);
@@ -461,27 +477,55 @@ program
 
 program
   .command('verify')
-  .description('Check a hunt as a spectator would: dealer, ciphertext hash, and the thaw file if published')
+  .description('Check a hunt as a spectator would: dealer, ciphertext hash, and the thaw file if published (exit 1 on any failure)')
   .requiredOption('--game <id>')
+  .option('--sample <n>', 'after the thaw: decrypt this many random sealed tiles and compare them with the thaw file', (v) => Number(v), 24)
   .action(async (o) => {
     const e = env(false);
     const { game } = await gameCtx(e, o.game);
     console.log(`Dealer: ${dealerName(game.dealerKind)}${game.enclaveId ? ` (enclave ${game.enclaveId})` : ''}`);
     if (game.dealerKind === DealerKind.CEREMONY) console.log('WARNING: host-dealt. The host could know this map.');
     const cts = await readAllTiles(e.cfg.walrusAggregators, game.quiltId);
-    const { checkCiphertexts } = await import('@whiteout/core');
-    console.log(`ct_hash: ${checkCiphertexts(cts, game.ctHash) ? 'matches' : 'MISMATCH: do not join'}`);
+    const { checkCiphertexts, readBlob } = await import('@whiteout/core');
+    let failed = false;
+    const ctOk = checkCiphertexts(cts, game.ctHash);
+    if (!ctOk) failed = true;
+    console.log(`ct_hash: ${ctOk ? 'matches' : 'MISMATCH: do not join'}`);
+    const pkgOk = cts.every((ct) => sameId(ciphertextServers(ct).packageId, e.cfg.packageId));
+    if (!pkgOk) failed = true;
+    console.log(`Tiles sealed for this package: ${pkgOk ? 'yes' : 'NO: key servers would follow another policy'}`);
     if (game.thawBlob) {
-      const { readBlob } = await import('@whiteout/core');
       const thaw = JSON.parse(new TextDecoder().decode(await readBlob(e.cfg.walrusAggregators, game.thawBlob)));
-      const check = verifyThaw(thaw, o.game, game.dealerPk, game.dealTs);
-      const relicsOk = check.ok && check.relics!.length === game.relics;
+      const check = verifyThaw(thaw, o.game, game.dealerPk, game.dealTs, game.relics);
+      if (!check.ok) failed = true;
       console.log(
         check.ok
-          ? `Thaw file: all 576 tiles verify; ${check.relics!.length} relic(s) at ${check.relics!.map((p) => `(${p})`).join(' ')}${relicsOk ? '' : ` (MISMATCH: the hunt has ${game.relics} prizes)`}`
+          ? `Thaw file: all 576 tiles verify and follow the map rules; ${check.relics!.length} relic(s) at ${check.relics!.map((p) => `(${p})`).join(' ')}`
           : `Thaw file FAILED: ${check.problems.slice(0, 5).join('; ')}`,
       );
+      // Signatures alone do not tie the thaw to the sealed tiles (a host who dealt it
+      // could sign two maps): decrypt a sample of the real ciphertexts and compare.
+      if (check.ok && o.sample > 0) {
+        const { ctx } = await gameCtx(e, o.game);
+        const seal = makeSealClient(e.client, e.cfg);
+        const sessionKey = await SessionKey.create({ address: e.address, packageId: e.cfg.packageId, ttlMin: 10, suiClient: e.client });
+        const { signature } = await e.signer.signPersonalMessage(sessionKey.getPersonalMessage());
+        await sessionKey.setPersonalMessageSignature(signature);
+        const picks = [...new Set(Array.from({ length: o.sample }, () => Math.floor(Math.random() * 576)))];
+        const res = await decryptTiles({
+          seal, suiClient: e.client, ctx, gameId: o.game, dealerPk: game.dealerPk, dealTs: game.dealTs,
+          threshold: e.cfg.sealThreshold, sessionKey, tiles: picks.map((i) => ({ x: i % 24, y: Math.floor(i / 24), ct: cts[i]! })),
+        });
+        const bad = res.filter((r) => check.map![r.tile.y * 24 + r.tile.x] !== r.tile.kind || !r.verified);
+        if (bad.length) failed = true;
+        console.log(
+          bad.length
+            ? `Sealed tiles vs thaw: ${bad.length}/${res.length} DIFFER, e.g. (${bad[0]!.tile.x}, ${bad[0]!.tile.y})`
+            : `Sealed tiles vs thaw: ${res.length} random tiles decrypted and match`,
+        );
+      }
     }
+    if (failed) process.exitCode = 1;
   });
 
 program

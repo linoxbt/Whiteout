@@ -109,7 +109,7 @@ function Console({ address }: { address: string }) {
   const reload = useCallback(async () => {
     try {
       const caps = await myHostCaps(address);
-      const games = await Promise.all(caps.map(async (c) => ({ capId: c.capId, g: await getGame(suiClient, c.gameId).catch(() => null) })));
+      const games = await Promise.all(caps.map(async (c) => ({ capId: c.capId, g: await getGame(suiClient, c.gameId, config.packageId).catch(() => null) })));
       setHunts(games.filter((x): x is { capId: string; g: GameState } => !!x.g).sort((a, b) => (b.g.openAt || 9e15) - (a.g.openAt || 9e15)));
       setListError(null);
     } catch (e) {
@@ -440,7 +440,7 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
     if (st.busy) return;
     st.busy = true;
     try {
-      const [game, page] = await Promise.all([getGame(suiClient, gameId), listGameEvents(suiClient, config.packageId, gameId, st.cursor)]);
+      const [game, page] = await Promise.all([getGame(suiClient, gameId, config.packageId), listGameEvents(suiClient, config.packageId, gameId, st.cursor)]);
       st.cursor = page.cursor ?? st.cursor;
       const t = applyEvents(st.trail, page.events);
       setG(game);

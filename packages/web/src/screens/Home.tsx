@@ -72,7 +72,7 @@ export function Home() {
     const load = async () => {
       try {
         const ids = await listGames(suiClient, config.packageId, 30);
-        const gs = await Promise.all(ids.map((id) => getGame(suiClient, id).catch(() => null)));
+        const gs = await Promise.all(ids.map((id) => getGame(suiClient, id, config.packageId).catch(() => null)));
         if (!stop) setGames(gs.filter((g): g is GameState => !!g));
         setError(null);
       } catch (e) {

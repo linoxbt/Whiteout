@@ -26,9 +26,11 @@ export function sealEncryptor(seal: SealClient, packageId: string, threshold: nu
 }
 
 /** The key-server object IDs a ciphertext was encrypted to (Verify page, AC25). */
-export function ciphertextServers(ct: Uint8Array): { ids: string[]; threshold: number; id: string } {
+export function ciphertextServers(ct: Uint8Array): { ids: string[]; threshold: number; id: string; packageId: string } {
   const o = EncryptedObject.parse(ct);
-  return { ids: o.services.map(([id]) => id), threshold: o.threshold, id: o.id };
+  // packageId names the package whose seal_approve guards the key: it must be ours,
+  // or key servers would follow another package's policy.
+  return { ids: o.services.map(([id]) => id), threshold: o.threshold, id: o.id, packageId: o.packageId };
 }
 
 export const SESSION_TTL_MIN = 30;

@@ -34,7 +34,7 @@ export function Verify({ gameId }: { gameId: string }) {
     void (async () => {
       let game: GameState;
       try {
-        game = await getGame(suiClient, gameId);
+        game = await getGame(suiClient, gameId, config.packageId);
       } catch (e) {
         if (!stop) setError((e as Error).message);
         return;

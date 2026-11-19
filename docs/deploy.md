@@ -15,7 +15,7 @@ sui client publish move/whiteout --with-unpublished-dependencies --gas-budget 50
 whiteout -n testnet admin record --digest <publish digest>
 ```
 
-`admin record` writes the package ID, the UpgradeCap and `Cap<DEALER>` into `deploy/testnet.json`.
+`admin record` writes the package ID, the UpgradeCap and the shared `DealerRegistry` (which holds `Cap<DEALER>` for good) into `deploy/testnet.json`.
 
 ## 2. Build the dealer for this package
 
@@ -35,7 +35,7 @@ whiteout -n testnet admin enclave-config --pcrs enclave/whiteout-dealer/out/nitr
 whiteout -n testnet admin register --url http://<instance>:3000
 ```
 
-Debug builds have all-zero PCRs; `enclave-config` refuses them. Restrict the instance's security group to the host's IP (spec section 12).
+`enclave-config` creates the one dealer config through the registry and pins it: only enclaves registered against it, at its current PCRs, can deal (`dealer::update_pcrs` rotates them and retires older enclaves). Debug builds have all-zero PCRs; both the CLI and the contract refuse them. For the web console's "Deal with the enclave", serve the enclave over HTTPS (TLS on the parent instance). Restrict the instance's security group to the host's IP (spec section 12).
 
 ## 4. Check the deployment from a second machine
 
@@ -56,7 +56,22 @@ Irreversible. `whiteout create` on Mainnet refuses to run while a recorded Upgra
 
 ## 6. Sponsor service
 
-Environment: `NETWORK`, `PACKAGE_ID`, `ENOKI_PRIVATE_KEY`, `REDIS_URL` + `REDIS_TOKEN` (Upstash REST), `ALLOWED_ORIGINS`.
+Environment (the service refuses to start if a required one is missing):
+
+| Variable | Required | Notes |
+|---|---|---|
+| `PACKAGE_ID`, `ENOKI_PRIVATE_KEY` | yes | |
+| `REDIS_URL` + `REDIS_TOKEN` | yes | Upstash REST. Quotas, digests and counters live here, so serverless instances share them. |
+| `ALLOWED_ORIGINS` | yes | Comma-separated exact origins; `*` is refused in production. |
+| `NETWORK` | no | `testnet` (default) or `mainnet`. |
+| `SUI_RPC_URL` | no | Full node used to check that a call's game is a real Whiteout `Game`. |
+| `DAILY_TX_BUDGET` | no | Sponsored transactions per UTC day, all players (default 20 000). |
+| `IP_RATE_LIMIT_PER_MIN`, `BEACON_RATE_LIMIT_PER_MIN` | no | Defaults 120 and 30. |
+| `METRICS_TOKEN` | no | Enables `GET /metrics` (bearer token, 16+ characters). |
+| `TRUST_PROXY` | no | Node only: trust `x-forwarded-for`. |
+| `ALLOW_MEMORY_STORE=1` | dev only | In-memory store for local runs; refused in production. |
+
+Per player: 600 sponsored transactions in any 24 h; gas budget at most 0.05 SUI per transaction, enforced on the sponsored bytes. The HTTP status contract is documented at the top of `packages/sponsor/src/app.ts`.
 
 - Vercel: deploy `packages/sponsor` (it has `api/index.ts` and `vercel.json`).
 - Anywhere with Node: `pnpm --filter @whiteout/sponsor start` (port 8787).
@@ -90,7 +105,7 @@ whiteout thaw --game <game>
 
 ### Monitoring
 
-`whiteout status --game <game> --watch` prints joins, steps, pending reveals and freezes every 15 s and raises alerts for: overdue pendings, freezes caused by overdue reveals, a key-fetch error rate above 20% (from the web client's anonymous beacons, counted by the sponsor at `/stats/<game>`), the sponsor not answering, and failed deals. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to receive them in Telegram. The sponsor's `/health` shows sponsored, refused, quota-hit and Enoki-error counts.
+`whiteout status --game <game> --watch` prints joins, steps, pending reveals and freezes every 15 s and raises alerts for: overdue pendings, freezes caused by overdue reveals, a key-fetch error rate above 20% (from the web client's anonymous beacons, counted by the sponsor at `/stats/<game>`), the sponsor not answering, and failed deals. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to receive them in Telegram. The sponsor's `/health` answers `{ok, version}`; its counters (sponsored, refused, quota hits, Enoki errors and latency) are at `/metrics` with `METRICS_TOKEN`.
 
 ### Load test (NFR1-NFR3)
 

@@ -36,7 +36,7 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
     setStatus('Loading the thaw file…');
     readBlob(config.walrusAggregators, thawBlob)
       .then((bytes) => {
-        const check = verifyThaw(JSON.parse(new TextDecoder().decode(bytes)), g.id, g.dealerPk, g.dealTs);
+        const check = verifyThaw(JSON.parse(new TextDecoder().decode(bytes)), g.id, g.dealerPk, g.dealTs, g.relics);
         if (check.ok) {
           setMap(check.map!);
           setStatus('Thaw file verified: every tile carries the dealer\'s signature.');

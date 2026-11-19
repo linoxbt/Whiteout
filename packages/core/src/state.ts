@@ -1,3 +1,4 @@
+import { normalizeSuiAddress } from '@mysten/sui/utils';
 /** On-chain object and event layouts (BCS), parsed from gRPC object content. */
 import { bcs } from '@mysten/sui/bcs';
 import { ExplorerStatus, GameStatus, VISITED_BYTES } from './constants.js';
@@ -334,14 +335,17 @@ export type GameEvent = {
   };
 }[EventName];
 
+const normalizeEventType = (t: string) => t.replace(/^(0x[0-9a-fA-F]+)::/, (_, a: string) => `${normalizeSuiAddress(a)}::`);
+
 /** Parses a raw event if it is one of Whiteout's. */
 export function parseEvent(
   packageId: string,
   e: { eventType: string; bcs: Uint8Array; transactionDigest?: string; checkpoint?: string | null; eventIndex?: number },
 ): GameEvent | null {
-  const prefix = `${packageId}::game::`;
-  if (!e.eventType.startsWith(prefix)) return null;
-  const name = e.eventType.slice(prefix.length).replace(/<.*$/, '') as EventName;
+  // Event types carry the full 64-hex package ID; accept a short form in config too.
+  const prefix = `${normalizeSuiAddress(packageId)}::game::`;
+  if (!normalizeEventType(e.eventType).startsWith(prefix)) return null;
+  const name = normalizeEventType(e.eventType).slice(prefix.length).replace(/<.*$/, '') as EventName;
   const layout = EventBcs[name];
   if (!layout) return null;
   return {

@@ -199,7 +199,7 @@ export class Hunt {
     const address = this.address;
     try {
       const [game, page, clock] = await Promise.all([
-        getGame(suiClient, this.gameId),
+        getGame(suiClient, this.gameId, config.packageId),
         listGameEvents(suiClient, config.packageId, this.gameId, this.#cursor),
         readClock(),
       ]);
@@ -209,7 +209,7 @@ export class Hunt {
       let me: ExplorerState | null = null;
       if (address) {
         const mine = [...trail.explorers.entries()].find(([, e]) => sameId(e.owner, address));
-        if (mine) me = await getExplorer(suiClient, mine[0]);
+        if (mine) me = await getExplorer(suiClient, mine[0], config.packageId);
       }
       // The player switched accounts mid-read: the next pass reads for the new one.
       if (address !== this.address) return;
@@ -323,8 +323,10 @@ export class Hunt {
     try {
       const cts = await readAllTiles(config.walrusAggregators, game.quiltId, (n) => this.#set({ integrityProgress: n }));
       const servers = new Set(config.sealServers.map((s) => s.objectId.toLowerCase()));
-      const named = ciphertextServers(cts[0]!).ids.map((s) => s.toLowerCase());
-      const ok = checkCiphertexts(cts, game.ctHash) && named.every((s) => servers.has(s));
+      const info = ciphertextServers(cts[0]!);
+      const named = info.ids.map((s) => s.toLowerCase());
+      // Tiles sealed for another package could never be read here: refuse to join.
+      const ok = checkCiphertexts(cts, game.ctHash) && named.every((s) => servers.has(s)) && sameId(info.packageId, config.packageId);
       if (ok) cts.forEach((ct, i) => this.#cts.set(`${i % 24},${Math.floor(i / 24)}`, ct));
       this.#set({ integrity: ok ? 'ok' : 'failed' });
       return ok;

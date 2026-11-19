@@ -4,6 +4,7 @@ import {
   bytesEqual,
   checkCiphertexts,
   ciphertextServers,
+  sameId,
   deal,
   EnclaveBcs,
   fromBase64,
@@ -80,6 +81,7 @@ export async function requestEnclaveDeal(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ game_id: gameId, relics }),
+    signal: AbortSignal.timeout(120_000), // a deal seals 576 tiles: seconds, not minutes
   });
   if (!res.ok) throw new Error(`enclave /deal ${res.status}: ${await res.text()}`);
   const body = (await res.json()) as EnclaveDealResponse;
@@ -125,6 +127,10 @@ export function checkDealFile(env: Env, d: DealFile): void {
       throw new Error(`tile ${t.id} is encrypted to key servers other than the configured ones (MD16)`);
     }
     if (info.threshold !== env.cfg.sealThreshold) throw new Error(`tile ${t.id} has threshold ${info.threshold}`);
+    // The key servers apply the named package's policy: it must be this deployment's.
+    if (!sameId(info.packageId, env.cfg.packageId)) {
+      throw new Error(`tile ${t.id} is sealed for package ${info.packageId}, not ${env.cfg.packageId}`);
+    }
     if (info.id.replace(/^0x/, '').toLowerCase() !== identityHex(d.gameId, t.x, t.y)) {
       throw new Error(`tile ${t.id} is encrypted under the wrong identity`);
     }

@@ -8,7 +8,12 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { concatBytes, u32le, bytesEqual } from './bytes.js';
 import { GRID, TILE_COUNT, TileKind } from './constants.js';
 import { identityHex, quiltPatchId, tileIndex } from './identity.js';
-import { findRelic, findRelics, hazardsAt, warmthAt, type MapKinds } from './map.js';
+import { findRelic, findRelics, hazardsAt, validateMap, warmthAt, type MapKinds } from './map.js';
+
+const sameId = (a: string, b: string) => {
+  const n = (s: string) => s.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  return n(a) === n(b);
+};
 import {
   clueMessage,
   dealMessage,
@@ -130,10 +135,13 @@ export function verifyThaw(
   gameId: string,
   dealerPk: Uint8Array,
   dealTs: bigint,
+  /** The game's relic count: the thawed map must have exactly this many. */
+  relics?: number,
 ): ThawCheck {
   const problems: string[] = [];
   const map = new Uint8Array(TILE_COUNT).fill(255);
-  if (thaw.game_id.toLowerCase() !== gameId.toLowerCase()) problems.push('thaw file is for another game');
+  const clues = new Map<number, { warmth: number; hazards: number }>();
+  if (!sameId(thaw.game_id, gameId)) problems.push('thaw file is for another game');
   if (thaw.tiles.length !== TILE_COUNT) problems.push(`thaw file has ${thaw.tiles.length} tiles`);
   for (const entry of thaw.tiles) {
     try {
@@ -142,11 +150,33 @@ export function verifyThaw(
       const t = decodeTilePlaintext(entry.x, entry.y, bytes);
       if (!verifyTile(dealerPk, gameId, dealTs, t)) problems.push(`tile (${entry.x}, ${entry.y}) signature`);
       map[tileIndex(entry.x, entry.y)] = t.kind;
+      clues.set(tileIndex(entry.x, entry.y), { warmth: t.warmth, hazards: t.hazards });
     } catch (e) {
       problems.push(`tile (${entry.x}, ${entry.y}): ${(e as Error).message}`);
     }
   }
   if (map.includes(255)) problems.push('thaw file is missing tiles');
+  else {
+    // Signatures prove the dealer signed each tile; the rules prove the map is a fair one.
+    const found = findRelics(map).length;
+    if (relics !== undefined && found !== relics) problems.push(`the map has ${found} relic(s), the game ${relics}`);
+    try {
+      problems.push(...validateMap(map, relics ?? Math.max(1, found)).map((p) => `map rule: ${p}`));
+    } catch (e) {
+      problems.push(`map rule: ${(e as Error).message}`);
+    }
+    // Every clue must be the one the map implies.
+    const rel = findRelics(map);
+    if (rel.length) {
+      for (const [i, c] of clues) {
+        const x = i % GRID;
+        const y = Math.floor(i / GRID);
+        if (c.warmth !== warmthAt(x, y, rel) || c.hazards !== hazardsAt(map, x, y)) {
+          problems.push(`tile (${x}, ${y}) clue does not match the map`);
+        }
+      }
+    }
+  }
   const ok = problems.length === 0;
   return ok ? { ok, problems, map, relic: findRelic(map), relics: findRelics(map) } : { ok, problems };
 }

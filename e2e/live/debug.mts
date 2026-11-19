@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { loadConfig, makeClient } from '@whiteout/core';
 import deploy from '../../deploy/testnet.json' with { type: 'json' };
-import { connect, installWallet } from './wallet.ts';
+import { connect, installWallet } from './wallet.js';
 const { chromium } = createRequire(import.meta.url)('playwright') as typeof import('playwright');
 const s = JSON.parse(readFileSync(process.env.LIVE_STATE!, 'utf8'));
 const client = makeClient(loadConfig('testnet', deploy as never));

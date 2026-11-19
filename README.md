@@ -45,7 +45,14 @@ All three languages are tested against them.
 
 ## Status
 
-All parts are built and tested in CI. Not done yet: deployment (needs a funded key,
-an Enoki project, an AWS Nitro instance and the Seal Mainnet tier), and the open
-questions in spec section 22 (well-fund address, Mainnet key servers, art permission,
-prize, stake).
+Built and tested in CI (Move: 1 148 tests; TypeScript; Rust; localnet end-to-end and
+load bots; a web smoke test under the production CSP). Live on Sui testnet at
+https://whiteout-hunt.netlify.app with wallet sign-in; hunts there are host-dealt and
+free. See `docs/security-audit.md` for the November 2026 audit and what is fixed.
+
+Not done yet, and each needs an account or funds the repository cannot hold:
+- Google sign-in and sponsored gas: an Enoki project (public and private keys), a Google
+  OAuth client, and a deployed sponsor with Upstash Redis (`docs/deploy.md`, step 6).
+- The attested dealer: an AWS Nitro instance to run and register the enclave.
+- Mainnet: a funded key, the Seal Mainnet key servers, and the open questions in spec
+  section 22 (well-fund address, art permission, prize, stake).

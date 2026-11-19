@@ -68,7 +68,7 @@ export function parseAbort(err: unknown, packageId?: string): AbortInfo | null {
     return ABORTS[Number(e.MoveAbort.abortCode)] ?? null;
   }
   const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
-  const m = msg?.match(/MoveAbort.*?(?:game|policy|tiles|allowlist).*?,\s*(\d+)\)/) ?? msg?.match(/abort(?:Code|_code)?\D+(\d+)/i);
+  const m = msg?.match(/MoveAbort.*?(?:game|policy|tiles|allowlist).*?,\s*(\d+)\)/) ?? msg?.match(/abort[\s_]?code\D{0,8}(\d+)/i);
   return m ? (ABORTS[Number(m[1])] ?? null) : null;
 }
 

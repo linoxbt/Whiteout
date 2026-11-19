@@ -110,6 +110,9 @@ export function decodeTilePlaintext(x: number, y: number, bytes: Uint8Array): Ti
   if (bytes.length !== TILE_PLAINTEXT_LEN) throw new Error(`tile plaintext must be ${TILE_PLAINTEXT_LEN} bytes`);
   const p = TilePlain.parse(bytes);
   if (p.version !== 1) throw new Error(`unknown tile version ${p.version}`);
+  // The padding after the BCS body must be zero: no byte of a tile may change unseen.
+  const used = TilePlain.serialize(p).toBytes().length;
+  if (bytes.subarray(used).some((b) => b !== 0)) throw new Error('tile plaintext has non-zero padding');
   return {
     x,
     y,

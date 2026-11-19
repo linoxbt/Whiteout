@@ -9,6 +9,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   checkCiphertexts,
   ciphertextServers,
+  sameId,
   deal,
   decryptTiles,
   fromBase64,
@@ -180,6 +181,7 @@ export async function enclaveDealInBrowser(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ game_id: gameId, relics }),
+    signal: AbortSignal.timeout(120_000), // a deal seals 576 tiles: seconds, not minutes
   });
   if (!res.ok) throw new Error(`enclave /deal ${res.status}: ${await res.text()}`);
   const body = (await res.json()) as { deal_ts: number; dealer_pk: string; ct_hash: string; deal_sig: string; relics?: number; tiles: Array<{ id: string; ct: string }> };
@@ -220,6 +222,8 @@ async function upload(
   for (const t of tiles) {
     const info = ciphertextServers(t.ct);
     if (!info.ids.every((s) => pinned.has(s.toLowerCase()))) throw new Error(`tile ${t.id} names unpinned key servers`);
+    if (!sameId(info.packageId, config.packageId)) throw new Error(`tile ${t.id} is sealed for another package`);
+    if (info.threshold !== config.sealThreshold) throw new Error(`tile ${t.id} has threshold ${info.threshold}`);
     if (info.id.replace(/^0x/, '').toLowerCase() !== identityHex(d.gameId, t.x, t.y)) throw new Error(`tile ${t.id} has the wrong identity`);
   }
   if (!config.walrusPublisher) throw new Error('This network has no public Walrus publisher: deal with the CLI.');
@@ -237,7 +241,7 @@ async function upload(
  * signature, publish the thaw file to Walrus. Returns the blob ID for publish_thaw.
  */
 export async function thawInBrowser(
-  g: { id: string; quiltId: string; dealerPk: Uint8Array; dealTs: bigint; coinType: string },
+  g: { id: string; quiltId: string; dealerPk: Uint8Array; dealTs: bigint; coinType: string; relics: number },
   address: string,
   onProgress: (msg: string) => void,
 ): Promise<{ blobId: string; relics: Array<[number, number]> }> {
@@ -259,7 +263,7 @@ export async function thawInBrowser(
     onProgress(`Thawed ${tiles.length}/576…`);
   }
   const file = thawFile(g.id, tiles);
-  const check = verifyThaw(file, g.id, g.dealerPk, g.dealTs);
+  const check = verifyThaw(file, g.id, g.dealerPk, g.dealTs, g.relics);
   if (!check.ok) throw new Error(`thaw check failed: ${check.problems.slice(0, 3).join('; ')}`);
   if (!config.walrusPublisher) throw new Error('This network has no public Walrus publisher: thaw with the CLI.');
   onProgress('Publishing the thaw file…');

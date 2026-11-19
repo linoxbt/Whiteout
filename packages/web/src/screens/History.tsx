@@ -112,7 +112,7 @@ export function History() {
       try {
         const { games: summaries, more } = await scanEvents();
         if (!stop) setMore(more);
-        const games = await Promise.all([...summaries.keys()].map((id) => getGame(suiClient, id).catch(() => null)));
+        const games = await Promise.all([...summaries.keys()].map((id) => getGame(suiClient, id, config.packageId).catch(() => null)));
         const list = games
           .filter((g): g is GameState => !!g)
           .map((g) => ({ g, s: summaries.get(g.id) ?? empty() }))

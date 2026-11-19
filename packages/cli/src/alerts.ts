@@ -10,11 +10,14 @@ export async function alert(text: string): Promise<void> {
   const chat = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chat) return;
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chat, text: `Whiteout: ${text}` }),
+      signal: AbortSignal.timeout(10_000),
     });
+    // A wrong token or chat answers 4xx: say so, or alerts vanish silently.
+    if (!r.ok) console.error(`Telegram refused the alert (${r.status}): ${(await r.text()).slice(0, 200)}`);
   } catch (e) {
     console.error(`could not send the Telegram alert: ${(e as Error).message}`);
   }

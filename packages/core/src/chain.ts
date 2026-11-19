@@ -21,13 +21,25 @@ export function makeClient(cfg: Pick<NetworkConfig, 'network' | 'rpcUrl'>): Clie
   return new SuiGrpcClient({ network: cfg.network, baseUrl: cfg.rpcUrl });
 }
 
-export async function getGame(client: Client, gameId: string): Promise<GameState> {
+/** Throws unless `type` is `<packageId>::<module>::<name>` (any type arguments). */
+function assertType(type: string | undefined, packageId: string | undefined, module: string, name: string, id: string) {
+  if (!packageId) return;
+  const m = (type ?? '').match(/^(0x[0-9a-fA-F]+)::(\w+)::(\w+)/);
+  if (!m || !sameId(m[1]!, packageId) || m[2] !== module || m[3] !== name) {
+    throw new Error(`${id} is not a Whiteout ${name} of this deployment (${type ?? 'unknown type'})`);
+  }
+}
+
+/** Reads a Game. With `packageId`, refuses a look-alike object from another package. */
+export async function getGame(client: Client, gameId: string, packageId?: string): Promise<GameState> {
   const { object } = await client.core.getObject({ objectId: gameId, include: { content: true } });
+  assertType(object.type, packageId, 'game', 'Game', gameId);
   return parseGame(object.content, object.type);
 }
 
-export async function getExplorer(client: Client, explorerId: string): Promise<ExplorerState> {
+export async function getExplorer(client: Client, explorerId: string, packageId?: string): Promise<ExplorerState> {
   const { object } = await client.core.getObject({ objectId: explorerId, include: { content: true } });
+  assertType(object.type, packageId, 'game', 'Explorer', explorerId);
   return parseExplorer(object.content);
 }
 

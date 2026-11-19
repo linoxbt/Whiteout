@@ -7,6 +7,8 @@ version: games do not migrate, so a v1 hunt stays on the v1 package.
 
 A hunt can hide 1 to 3 relics and hold one prize per relic. The host sets the pot
 split in basis points per rank (for example 6000/2500/1500) when creating the lobby.
+Every share must be above zero: a zero share on the last rank would leave stakes that
+freeze after the first claim stuck in the pot (`a_zero_pot_share_is_refused`).
 
 - Finders rank in the order they claim. Rank *k* takes prize *k*, their own stake, and
   `pot × share_k / (shares of ranks k and below)` of the pot at that moment. The last
@@ -30,15 +32,20 @@ split in basis points per rank (for example 6000/2500/1500) when creating the lo
 `AllowlistCap` (for example the Lofi team, from a snapshot of Mystic Yeti or $LOFI
 holders). The host attaches a list in the lobby with `set_allowlist`. A gated game
 then refuses `join` (`EGated`, 24) and accepts `join_gated` only from members
-(`ENotAllowed`, 25). The list is fixed once the hunt opens.
+(`ENotAllowed`, 25). Which list gates the hunt is fixed once it opens; the list's
+members are live, so its cap holder can still add late holders (or remove addresses)
+during the hunt. Players see the list's name and size before joining.
 
 ## Blizzards
 
 A hunt may schedule blizzards: every `blizzard_every_ms` (at least 10 minutes), anyone
 may call `game::blizzard`, a private `entry` function that reads Sui Random.
 
-- It drops 12 snowdrifts on distinct tiles: never on base camp, at most 8 in one row,
-  so no row is ever walled off.
+- It drops 12 snowdrifts: never on base camp, at most 8 in one row, and never next to
+  another drift (8 directions). So at most two of any tile's four neighbours are ever
+  covered: no yeti and no relic is ever walled in (`drifts_never_wall_a_tile_in`).
+- A blizzard only starts if its drifts melt before the hunt ends, so drifts never
+  decide the outcome (`no_blizzard_that_would_outlast_the_hunt`).
 - A drift only stops a yeti stepping onto it (`EDrift`, 27). Nobody is moved, so the
   state-lag risk the spec warns about (R7) does not arise.
 - Drifts melt after `blizzard_ms`: at most 15 minutes and at most a third of the
@@ -46,8 +53,9 @@ may call `game::blizzard`, a private `entry` function that reads Sui Random.
   open again. This is how a blizzard never makes the map unsolvable
   (`blizzards_stay_inside_their_bounds` checks the bounds over many seeds).
 - Randomness is used only in that private entry function and never in `seal_approve`.
-- Active players' clients start a due blizzard after a short random wait; the CLI
-  (`status --watch --auto-blizzard`) and the host console can too.
+- Anyone may start a due blizzard: the host console, the CLI watcher
+  (`status --watch --auto-blizzard`), or a player tapping "Start it". Players' clients
+  never sign one on their own.
 
 ## Host console
 
@@ -77,8 +85,9 @@ the wells. With a wallet connected you can filter to the hunts you played.
 
 Players can turn on browser notifications for reveal deadlines (under a minute left),
 blizzards, rivals' finds and the last 10 minutes of a hunt. They fire while the hunt
-is open in a tab, including a background tab. There is no push server, so a closed tab
-gets no alerts.
+is open in a tab, including a background tab, through a small service worker (which
+Android requires). While the page is in front, an in-app notice shows instead. There is
+no push server, so a closed tab gets no alerts.
 
 ## CLI
 

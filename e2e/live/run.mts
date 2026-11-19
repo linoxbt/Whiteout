@@ -13,6 +13,10 @@ import { Transaction } from '@mysten/sui/transactions';
 import {
   GRID,
   TileKind,
+  applyEvents,
+  emptyTrail,
+  listGameEvents,
+  parseAbort,
   deal,
   findRelics,
   generateMap,
@@ -29,13 +33,15 @@ import {
 } from '@whiteout/core';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import deploy from '../../deploy/testnet.json' with { type: 'json' };
-import { connect, installWallet, type WalletLog } from './wallet.ts';
+import { connect, installWallet, type WalletLog } from './wallet.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright') as typeof import('playwright');
 
 const SITE = process.env.SITE ?? 'https://whiteout-hunt.netlify.app/';
-const STATE = process.env.LIVE_STATE ?? '/tmp/whiteout-live.json';
+// Player keys live in this file: it must be a path the operator chose, never a shared default.
+if (!process.env.LIVE_STATE) throw new Error('Set LIVE_STATE to a private file path (it holds test player keys).');
+const STATE = process.env.LIVE_STATE;
 const SHOTS = process.env.LIVE_SHOTS ?? '/tmp/whiteout-live';
 mkdirSync(SHOTS, { recursive: true });
 
@@ -113,7 +119,7 @@ const phases: Record<string, () => Promise<void>> = {
     const b = await chromium.launch();
     const { page, errors, log } = await open(b, 'E2E Host', host, '#/host');
     await connect(page, 'E2E Host');
-    await page.getByPlaceholder('0x… (Lofi well fund)').fill(host.toSuiAddress());
+    await fillWell(page);
     await page.getByLabel('Length (hours)').fill('1');
     await page.getByRole('button', { name: '2 ranked' }).click();
     await page.getByText('Blizzards: drifts block').click();
@@ -201,11 +207,11 @@ const phases: Record<string, () => Promise<void>> = {
     check('verify page: ciphertexts match the on-chain hash', /match/i.test(body) && !/mismatch/i.test(body));
 
     const t = await open(b, 'E2E Player 2', keyOf(s, 'p2'), `#/hunt/${gameId}`);
-    await t.page.getByText('2 of 2 relics found').waitFor({ timeout: 60_000 }).catch(() => {});
+    await t.page.getByText('2 of 2 relics found').waitFor({ timeout: 60_000 });
     await t.page.waitForTimeout(6000);
     await shot(t.page, 'E3-thaw-screen');
     const thawText = await t.page.innerText('body');
-    check('thaw screen: shows both relics found and the thaw file verified', /relics found/i.test(thawText) && /verified/i.test(thawText));
+    check('thaw screen: shows both relics found and the thaw file verified', /relics found/i.test(thawText) && /Thaw file verified/.test(thawText) && !/failed verification/i.test(thawText));
 
     const h = await open(b, 'E2E Player 1', keyOf(s, 'p1'), '#/history');
     await h.page.locator('.log-row').first().waitFor({ timeout: 90_000 });
@@ -224,7 +230,7 @@ const phases: Record<string, () => Promise<void>> = {
     const b = await chromium.launch();
     const { page, errors } = await open(b, 'E2E Host', host, '#/host');
     await connect(page, 'E2E Host');
-    await page.getByPlaceholder('0x… (Lofi well fund)').fill(host.toSuiAddress());
+    await fillWell(page);
     await page.getByLabel('Length (hours)').fill('1');
     await page.getByText('Blizzards: drifts block').click();
     await page.getByLabel('Every (min)').fill('10');
@@ -278,7 +284,7 @@ const phases: Record<string, () => Promise<void>> = {
     const btn = h.page.getByRole('button', { name: 'Start the due blizzard' });
     if (await btn.waitFor({ timeout: 15_000 }).then(() => true, () => false)) {
       await btn.click();
-      await h.page.getByText('A blizzard started.').waitFor({ timeout: 90_000 }).catch(() => {});
+      await h.page.getByText('A blizzard started.').waitFor({ timeout: 90_000 });
     }
     // Whoever starts it (an active player's client or the host), wait for the drifts to land.
     let g = await getGame(client, gameId);
@@ -311,7 +317,7 @@ const phases: Record<string, () => Promise<void>> = {
     check('console: allowlist created with one member', true, name);
     await page.reload();
     await connect(page, 'E2E Host').catch(() => {});
-    await page.getByPlaceholder('0x… (Lofi well fund)').fill(host.toSuiAddress());
+    await fillWell(page);
     await page.getByLabel('Length (hours)').fill('1');
     await page.locator('select').selectOption({ label: `${name} (1)` });
     await page.getByRole('button', { name: /Create the lobby/ }).click();
@@ -344,13 +350,14 @@ const phases: Record<string, () => Promise<void>> = {
     await member.page.getByText(/You are on/).waitFor({ timeout: 60_000 });
     await joinAndConsent(member.page, 3);
     await member.page.locator('.here').waitFor({ timeout: 60_000 });
-    check('gated: member joins through join_gated', true);
+    const joined = applyEvents(emptyTrail(), (await listGameEvents(client, deploy.packageId, gameId)).events);
+    check('gated: member joins through join_gated', [...joined.explorers.values()].some((x) => x.owner === keyOf(s, 'p1').toSuiAddress()));
     // And the contract itself refuses an outsider who goes around the UI.
     let refused = false;
     try {
       await exec(keyOf(s, 'p3'), tx.join(ctx, { gameId, stake: 0n, column: 7, allowlistId: g0.allowlist }));
     } catch (e) {
-      refused = /25|ENotAllowed|MoveAbort/i.test(String(e));
+      refused = parseAbort(e, deploy.packageId)?.code === 25 || /ENotAllowed/.test(String(e));
     }
     check('gated: contract refuses a direct join_gated from a non-member (ENotAllowed)', refused);
     check('no page errors', errors.length + outsider.errors.length + member.errors.length === 0, [...errors, ...outsider.errors, ...member.errors].join(' | '));
@@ -406,6 +413,32 @@ function freezePlan(map: Uint8Array): Plan {
 
 const DIR = ['North', 'East', 'South', 'West'];
 
+/** The console asks for the well-fund address and its last 6 characters (F17). */
+async function fillWell(page: Page) {
+  await page.getByPlaceholder('0x… (Lofi well fund)').fill(host.toSuiAddress());
+  await page.getByLabel(/last 6 characters/).fill(host.toSuiAddress().slice(-6));
+}
+
+/**
+ * Audit B4: a revealed tile queued to ride with the next step must still reach the
+ * chain if the player opens another page and comes back without stepping.
+ */
+async function leaveAndReturn(page: Page, gameId: string, who: string) {
+  const queued = page.getByText(/Saved on-chain with your next step/);
+  if (!(await queued.waitFor({ timeout: 30_000 }).then(() => true, () => false))) {
+    console.log(`\n${who}: this tile resolved at once; nothing queued to test leaving with`);
+    return;
+  }
+  await page.evaluate((id) => (location.hash = `#/hunt/${id}/verify`), gameId);
+  await page.waitForTimeout(4000);
+  await page.evaluate((id) => (location.hash = `#/hunt/${id}`), gameId);
+  await page.locator('.here').waitFor({ timeout: 60_000 });
+  const sent = await page
+    .waitForFunction(() => !/Saved on-chain with your next step/.test(document.body.innerText), null, { timeout: 150_000, polling: 1000 })
+    .then(() => true, () => false);
+  check(`${who}: a queued reveal reaches the chain after leaving the page and coming back`, sent);
+}
+
 async function joinAndConsent(page: Page, column: number) {
   await page.getByText('All 576 tiles match').waitFor({ timeout: 240_000 });
   await page.locator('.camp-strip i').nth(column).click();
@@ -447,6 +480,7 @@ async function runner(b: Browser, who: string, name: string, gameId: string, pla
         return mm && Number(mm[1]) - 1 === ex && Number(mm[2]) - 1 === ey;
       }, [x, y], { timeout: 120_000, polling: 300 });
       process.stdout.write(`${who}:${x},${y} `);
+      if (who === 'p2' && i === 2) await leaveAndReturn(page, gameId, who);
     }
     if (plan.end === 'claim') {
       const claim = page.getByRole('button', { name: /Claim the relic/ });

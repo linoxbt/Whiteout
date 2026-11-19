@@ -2,7 +2,7 @@
 
 Anyone can check a hunt without trusting the host or the developers. The web client's **Verify** page runs these checks; the CLI does the same with `whiteout verify --game <id>` (no key needed).
 
-1. **The package cannot change.** The package's UpgradeCap was destroyed (`make_immutable`), so nobody can change the rules or the Seal policy. The digests are in `deploy/<network>.json`.
+1. **The package cannot change (Mainnet).** Before any Mainnet hunt, the package's UpgradeCap is destroyed (`make_immutable`), so nobody can change the rules or the Seal policy; the digests are in `deploy/mainnet.json`. The testnet package keeps its UpgradeCap, and the Verify page says "upgradeable" for it.
 2. **Who dealt the map.** `Game.dealer_kind` is `1` (enclave) or `2` (host-dealt). Host-dealt hunts are labelled everywhere and Move forces their stake to zero.
 3. **Which enclave.** `Game.enclave_id` names the `Enclave<DEALER>` whose key signed the deal. Its `config_version` should equal the `EnclaveConfig<DEALER>` version, whose PCRs you can rebuild from the tagged source (see `reproducible-build.md`).
 4. **The tiles were not swapped.** Download all 576 ciphertexts from the Quilt and recompute `ct_hash`; it must equal `Game.ct_hash`, which the dealer signed. The client refuses to join otherwise.

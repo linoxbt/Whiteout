@@ -17,8 +17,9 @@ on:
         default: testnet
         required: true
 
+# Read-only by default; only the release step below may write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -26,7 +27,8 @@ jobs:
     strategy:
       matrix:
         builder: [a, b]
-    runs-on: ${{ matrix.builder == 'a' && 'ubuntu-latest' || 'ubuntu-24.04' }}
+    # Two different runner images, so the two builds are independent.
+    runs-on: ${{ matrix.builder == 'a' && 'ubuntu-24.04' || 'ubuntu-22.04' }}
     defaults:
       run:
         working-directory: enclave/whiteout-dealer
@@ -49,6 +51,8 @@ jobs:
     name: Compare PCRs
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

@@ -110,7 +110,7 @@ export function registerAdmin(program: Command) {
     .requiredOption('--url <url>', 'enclave base URL, e.g. http://<ec2-ip>:3000')
     .action(async (o) => {
       const e = env();
-      const att = (await (await fetch(`${o.url.replace(/\/$/, '')}/get_attestation`)).json()) as { attestation?: string; error?: string };
+      const att = (await (await fetch(`${o.url.replace(/\/$/, '')}/get_attestation`, { signal: AbortSignal.timeout(30_000) })).json()) as { attestation?: string; error?: string };
       if (!att.attestation) throw new Error(att.error ?? 'no attestation');
       const t = new Transaction();
       const doc = t.moveCall({

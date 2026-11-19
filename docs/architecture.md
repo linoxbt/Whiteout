@@ -3,7 +3,7 @@
 Sui is the only source of truth. There is no Whiteout database: every client rebuilds state from on-chain objects and events. The Whiteout team runs two things: a stateless sponsor service, and the dealer enclave for a few minutes per hunt.
 
 ```
-                 ┌──────────── Sui (immutable package `whiteout`) ────────────┐
+                 ┌──── Sui (package `whiteout`; immutable on Mainnet) ────┐
                  │ game: Game<T> (shared), Explorer<T> (shared, one/player),  │
                  │       HostCap, escrow, payouts, events                     │
                  │ policy: seal_approve, seal_approve_thaw                    │
@@ -25,7 +25,7 @@ Sui is the only source of truth. There is no Whiteout database: every client reb
 
 | Path | What | Tests |
 | --- | --- | --- |
-| `move/whiteout` | Game rules, escrow, payouts, Seal policy | `sui move test` (111 tests, incl. conservation property) |
+| `move/whiteout` | Game rules, escrow, payouts, Seal policy, dealer registry | `sui move test` (1 148 tests, incl. 10 024 conservation sequences) |
 | `move/enclave` | Nautilus enclave package, vendored | upstream tests |
 | `packages/core` | Message formats, identities, map rules, deal, tx builders, chain reads, Seal/Walrus helpers | Vitest; re-verifies all Move fixture signatures |
 | `packages/cli` | Host CLI: create, deal, open, status, settle, thaw, verify, admin | Vitest; checks real Rust dealer output |
@@ -58,5 +58,5 @@ Each is `IntentMessage { intent: u8, timestamp_ms: u64 = deal_ts, payload }`. A 
 - `seal_approve_thaw` ships alongside `seal_approve` (no Explorer needed for the thaw).
 - `seal_deal_enclave` accepts only `Enclave<DEALER>`.
 - `cancel_empty` cancels a lobby that never got a prize.
-- The sponsor refuses any command touching the gas coin and any funds withdrawal from the sponsor; its quota is 1 200 transactions per address per hunt.
+- The sponsor refuses any command touching the gas coin, any funds withdrawal from the sponsor and any transfer except change back to the sender; its quota is 600 transactions per address per rolling 24 h (spec AC23), under a global daily budget and a per-IP limit.
 - The enclave package is published inside the `whiteout` package (`--with-unpublished-dependencies`), so there is one package and one UpgradeCap to destroy.

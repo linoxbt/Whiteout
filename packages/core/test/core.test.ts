@@ -36,6 +36,7 @@ import {
   seededRng,
   signTiles,
   thawFile,
+  clueMessage,
   tileIndex,
   toHex,
   tx,
@@ -240,7 +241,35 @@ describe('deal, plaintexts and the thaw', () => {
     const h = bad.tiles[10]!.plaintext_hex;
     bad.tiles[10]!.plaintext_hex = (h[0] === '0' ? '1' : '0') + h.slice(1);
     expect(verifyThaw(bad, F.gameId, pk, 5n).ok).toBe(false);
-  });
+    // A flipped padding byte (past the BCS body) is caught too.
+    const pad = structuredClone(thaw);
+    const ph = pad.tiles[11]!.plaintext_hex;
+    pad.tiles[11]!.plaintext_hex = ph.slice(0, -2) + (ph.endsWith('00') ? '01' : '00');
+    expect(verifyThaw(pad, F.gameId, pk, 5n).ok).toBe(false);
+    // The game ID may be written without leading zeros or 0x.
+    expect(verifyThaw(thaw, F.gameId.replace(/^0x0*/, ''), pk, 5n).ok).toBe(true);
+    // The relic count must match the game.
+    expect(verifyThaw(thaw, F.gameId, pk, 5n, 2).problems.join()).toMatch(/relic/);
+  }, 30_000);
+
+  it('a validly signed thaw of an unfair map is rejected (audit: S6)', () => {
+    // The dealer key signed it, but the relic sits on base camp with no crevasses
+    // and every clue reads 0: the rules, not just the signatures, must hold.
+    const unfair = new Uint8Array(TILE_COUNT).fill(TileKind.SNOW);
+    unfair[3] = TileKind.RELIC;
+    const tiles = signTiles(unfair, F.gameId, 5n, sk).map((t) => ({ ...t }));
+    const check = verifyThaw(thawFile(F.gameId, tiles), F.gameId, ed25519.getPublicKey(sk), 5n, 1);
+    expect(check.ok).toBe(false);
+    expect(check.problems.some((p) => p.startsWith('map rule'))).toBe(true);
+    // A clue that does not match the map is caught even when it is signed.
+    const fair = signTiles(map, F.gameId, 5n, sk);
+    const lie = fair.map((t, i) => {
+      if (i !== 40) return t;
+      const hazards = (t.hazards + 1) % 9;
+      return { ...t, hazards, clueSig: ed25519.sign(clueMessage(F.gameId, 5n, { x: t.x, y: t.y, kind: t.kind, warmth: t.warmth, hazards }), sk) };
+    });
+    expect(verifyThaw(thawFile(F.gameId, lie), F.gameId, ed25519.getPublicKey(sk), 5n).problems.join()).toMatch(/clue does not match/);
+  }, 30_000);
 });
 
 describe('object layouts', () => {

@@ -25,6 +25,7 @@ export async function storeQuilt(
     const r = await fetchFn(`${publisher.replace(/\/$/, '')}/v1/quilts?epochs=${epochs}`, {
       method: 'PUT',
       body: form,
+      signal: AbortSignal.timeout(WRITE_TIMEOUT_MS),
     });
     if (!r.ok) throw new Error(`Walrus publisher ${r.status}: ${await r.text()}`);
     return r.json() as Promise<WalrusStoreResponse>;
@@ -55,6 +56,7 @@ export async function storeBlob(
     const res = await fetchFn(`${publisher.replace(/\/$/, '')}/v1/blobs?epochs=${epochs}`, {
       method: 'PUT',
       body: data as BodyInit,
+      signal: AbortSignal.timeout(WRITE_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`Walrus publisher ${res.status}: ${await res.text()}`);
     return res.json() as Promise<{
@@ -82,13 +84,17 @@ export async function readBlob(aggregators: string[], blobId: string, fetchFn: t
   return readWithFailover(aggregators, `/v1/blobs/${blobId}`, fetchFn);
 }
 
+const READ_TIMEOUT_MS = 20_000;
+const WRITE_TIMEOUT_MS = 180_000;
+
 async function readWithFailover(aggregators: string[], path: string, fetchFn: typeof fetch): Promise<Uint8Array> {
   let last: unknown;
   for (const base of aggregators) {
     try {
       return await withRetry(
         async () => {
-          const r = await fetchFn(`${base.replace(/\/$/, '')}${path}`);
+          // A hung aggregator must not hold a reveal past its deadline: time out and fail over.
+          const r = await fetchFn(`${base.replace(/\/$/, '')}${path}`, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
           if (r.status === 404) throw Object.assign(new Error('not found'), { fatal: true });
           if (!r.ok) throw new Error(`aggregator ${r.status}`);
           return new Uint8Array(await r.arrayBuffer());

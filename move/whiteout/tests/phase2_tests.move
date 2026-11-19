@@ -348,7 +348,7 @@ fun an_ungated_game_has_no_gated_door() {
 }
 
 #[test, expected_failure(abort_code = 2, location = whiteout::game)]
-fun the_list_is_fixed_once_the_game_opens() {
+fun the_gate_cannot_change_once_the_game_opens() {
     let (mut g, cap, mut env) = t::open_game(0, 8);
     let mut ctx = env.ctx(t::host());
     let (list, _lcap) = allowlist::new(b"holders".to_string(), &mut ctx);

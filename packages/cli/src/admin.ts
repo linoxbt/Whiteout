@@ -2,7 +2,7 @@
  * Deployment steps after `sui client publish` (spec section 13, deployment order):
  *   1. admin record          read the publish transaction into deploy/<network>.json
  *   2. pin-dealer, then build the enclave (make NETWORK=...) to get out/nitro.pcrs
- *   3. admin enclave-config  create EnclaveConfig<DEALER> with the release PCRs
+ *   3. admin enclave-config  create and pin the one EnclaveConfig<DEALER> with the release PCRs
  *   4. admin register        register the running enclave from its attestation
  *   5. admin make-immutable  destroy the UpgradeCap (MD6)
  */
@@ -32,10 +32,19 @@ export function registerAdmin(program: Command) {
     const packageId = changes.find((c) => c.outputState === 'PackageWrite')?.objectId;
     const typeOf = (id: string) => t.objectTypes?.[id] ?? '';
     const caps = changes.filter((c) => c.idOperation === 'Created' && /^0x0*2::package::UpgradeCap$/.test(typeOf(c.objectId))).map((c) => c.objectId);
-    const dealerCap = changes.find((c) => c.idOperation === 'Created' && /::enclave::Cap<.*::dealer::DEALER>/.test(typeOf(c.objectId)))?.objectId;
+    // Cap<DEALER> lives inside the shared DealerRegistry, which pins the one dealer config.
+    const registry = changes.find((c) => c.idOperation === 'Created' && /::dealer::DealerRegistry$/.test(typeOf(c.objectId)))?.objectId;
     if (!packageId) throw new Error('No package was published in that transaction.');
-    update(e.deployPath, { packageId, enclavePackageId: packageId, upgradeCapIds: caps, dealerCapId: dealerCap ?? '', publishDigest: digest });
-    console.log(`Package ${packageId}\nUpgradeCap ${caps.join(', ')}\nCap<DEALER> ${dealerCap}\nSaved to ${e.deployPath}`);
+    update(e.deployPath, {
+      packageId,
+      enclavePackageId: packageId,
+      upgradeCapIds: caps,
+      dealerRegistryId: registry ?? '',
+      enclaveConfigId: '',
+      dealerEnclaveId: '',
+      publishDigest: digest,
+    });
+    console.log(`Package ${packageId}\nUpgradeCap ${caps.join(', ')}\nDealerRegistry ${registry}\nSaved to ${e.deployPath}`);
     console.log(`\nNext: whiteout -n ${e.cfg.network} pin-dealer, then build the enclave and run admin enclave-config`);
   }
 
@@ -73,20 +82,26 @@ export function registerAdmin(program: Command) {
       const deploy = e.deploy as Deploy;
       const pcrs = o.pcr0 ? [o.pcr0, o.pcr1, o.pcr2] : parsePcrs(readFileSync(o.pcrs, 'utf8'));
       if (pcrs.some((p: string) => /^0+$/.test(p))) throw new Error('All-zero PCRs come from a debug build. Use a release build (spec section 21).');
+      const registryId = deploy.dealerRegistryId ? String(deploy.dealerRegistryId) : "";
+      if (!registryId) throw new Error('dealerRegistryId missing: publish the package with `admin publish` first.');
+      // 1. The registry creates the one config (shared, so its ID is known after this tx).
       const t = new Transaction();
       t.moveCall({
-        target: `${e.cfg.enclavePackageId}::enclave::create_enclave_config`,
-        typeArguments: [`${e.cfg.packageId}::dealer::DEALER`],
+        target: `${e.cfg.packageId}::dealer::create_config`,
         arguments: [
-          t.object(String(deploy.dealerCapId)),
+          t.object(registryId),
           t.pure.string(o.name),
           ...pcrs.map((p: string) => t.pure.vector('u8', fromHex(p))),
         ],
       });
       const r = await exec(e, t);
       const id = r.created.find((c) => c.type.includes('::enclave::EnclaveConfig<'))!.id;
+      // 2. Pin it: from now on game::seal_deal_enclave accepts only enclaves registered against it.
+      const p = new Transaction();
+      p.moveCall({ target: `${e.cfg.packageId}::dealer::pin_config`, arguments: [p.object(registryId), p.object(id)] });
+      const r2 = await exec(e, p);
       update(e.deployPath, { enclaveConfigId: id });
-      console.log(`EnclaveConfig ${id} (digest ${r.digest})`);
+      console.log(`EnclaveConfig ${id} pinned (digests ${r.digest}, ${r2.digest})`);
     });
 
   admin

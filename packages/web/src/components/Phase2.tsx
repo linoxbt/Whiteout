@@ -50,7 +50,7 @@ export function PrizeLadder({ g, me, compact = false }: { g: GameState; me?: str
 }
 
 /** Blizzard status: drifts melting, or the next blizzard's countdown. */
-export function Weather({ g, now }: { g: GameState; now: number }) {
+export function Weather({ g, now, onStart, busy }: { g: GameState; now: number; onStart?: () => void; busy?: boolean }) {
   if (!g.blizzardEveryMs) return null;
   const drifting = now < g.driftUntil && g.drifts.length > 0;
   const live = g.status === 1 && now < g.endsAt;
@@ -67,10 +67,17 @@ export function Weather({ g, now }: { g: GameState; now: number }) {
           <>
             <strong>Blizzard.</strong> {g.drifts.length} drifts melt in <span className="mono">{timeLeft(g.driftUntil - now)}</span>
           </>
-        ) : now >= g.nextBlizzardAt ? (
+        ) : now >= g.nextBlizzardAt && now + g.blizzardMs <= g.endsAt ? (
           <>
-            <strong>A blizzard is brewing.</strong> It starts with the next move.
+            <strong>A blizzard is brewing.</strong> Anyone may start it.{' '}
+            {onStart && (
+              <button className="link-button" disabled={busy} onClick={onStart}>
+                Start it
+              </button>
+            )}
           </>
+        ) : now >= g.nextBlizzardAt ? (
+          <>The skies stay clear until the thaw.</>
         ) : (
           <>
             Next blizzard in <span className="mono">{timeLeft(g.nextBlizzardAt - now)}</span>
@@ -108,6 +115,7 @@ export function NotifyToggle() {
         } else setOn(await enableNotify());
       }}
       aria-pressed={on}
+      title="Browser alerts for your reveal deadline, blizzards and rival finds, while this hunt is open in a tab"
     >
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
         <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0" />

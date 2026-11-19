@@ -23,7 +23,7 @@ export class TxError extends Error {
 export async function run(transaction: Transaction, wallet: UiWallet | null, sender: string): Promise<string> {
   transaction.setSenderIfNotSet(sender);
   const sponsored = wallet && isEnokiWallet(wallet) && config.sponsorUrl;
-  const digest = sponsored ? await runSponsored(transaction, wallet, sender) : await runDirect(transaction);
+  const digest = sponsored ? await runSponsored(transaction, wallet) : await runDirect(transaction);
   const res = await suiClient.core.waitForTransaction({ digest, include: { effects: true } });
   const t = res.Transaction ?? res.FailedTransaction!;
   if (!t.status.success) {
@@ -44,34 +44,57 @@ async function runDirect(transaction: Transaction): Promise<string> {
   }
 }
 
-async function runSponsored(transaction: Transaction, wallet: UiWallet, sender: string): Promise<string> {
+/** The sponsor's error body (see packages/sponsor/src/app.ts for the status contract). */
+interface SponsorError {
+  error?: string;
+  code?: string;
+  abort?: AbortInfo & Record<string, unknown>;
+}
+
+const SPONSOR_TIMEOUT_MS = 20_000;
+
+/** Turns a sponsor reply into a TxError; `retry` marks the ones worth another try. */
+function sponsorError(status: number, body: SponsorError): TxError & { retry: boolean } {
+  const err = new TxError(body.abort?.message ?? body.error ?? `gas service ${status}`, body.abort ?? null, status) as TxError & { retry: boolean };
+  // 502 (Enoki or node trouble), 503 store_unavailable and 409 (execute in progress)
+  // are transient; everything else (401, 403, 404, 422 aborts, 429 quota) is final.
+  err.retry = status === 502 || status === 409 || (status === 503 && body.code === 'store_unavailable');
+  return err;
+}
+
+async function post(url: string, init: RequestInit): Promise<{ status: number; body: SponsorError & Record<string, unknown> }> {
+  const r = await fetch(url, { ...init, method: 'POST', signal: AbortSignal.timeout(SPONSOR_TIMEOUT_MS) });
+  const body = (await r.json().catch(() => ({}))) as SponsorError & Record<string, unknown>;
+  return { status: r.status, body };
+}
+
+async function runSponsored(transaction: Transaction, wallet: UiWallet): Promise<string> {
   const session = await getSession(wallet);
   if (!session?.jwt) throw new TxError('Your Google session expired. Please log in again.', null, 401);
   const kind = await transaction.build({ client: suiClient, onlyTransactionKind: true });
+  const retryIf = (e: unknown) => (e as { retry?: boolean }).retry !== false;
   const sponsored = await withRetry(
     async () => {
-      const r = await fetch(`${config.sponsorUrl}/sponsor`, {
-        method: 'POST',
+      const { status, body } = await post(`${config.sponsorUrl}/sponsor`, {
         headers: { 'content-type': 'application/json', 'zklogin-jwt': session.jwt! },
         body: JSON.stringify({ txKindBytes: toBase64(kind) }),
       });
-      const body = (await r.json().catch(() => ({}))) as { bytes?: string; digest?: string; error?: string };
-      if (r.status === 502) throw new Error(body.error ?? 'gas service error');
-      if (!r.ok) throw Object.assign(new TxError(body.error ?? `sponsor ${r.status}`, null, r.status), { fatal: true });
-      return body as { bytes: string; digest: string };
+      if (status !== 200) throw sponsorError(status, body);
+      return body as unknown as { bytes: string; digest: string };
     },
-    { tries: 4, retryIf: (e) => !(e as { fatal?: boolean }).fatal },
+    { tries: 4, retryIf },
   );
   const { signature } = await dAppKit.signTransaction({ transaction: sponsored.bytes });
-  const exec = await withRetry(async () => {
-    const r = await fetch(`${config.sponsorUrl}/sponsor/${sponsored.digest}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ signature }),
-    });
-    if (!r.ok) throw new Error(`gas service ${r.status}`);
-    return (await r.json()) as { digest: string };
-  });
-  void sender;
+  const exec = await withRetry(
+    async () => {
+      const { status, body } = await post(`${config.sponsorUrl}/sponsor/${sponsored.digest}`, {
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ signature }),
+      });
+      if (status !== 200) throw sponsorError(status, body);
+      return body as unknown as { digest: string };
+    },
+    { tries: 4, retryIf },
+  );
   return exec.digest;
 }

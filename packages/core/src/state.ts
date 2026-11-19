@@ -222,7 +222,8 @@ export function driftAt(g: GameState, x: number, y: number, nowMs: number): bool
 
 /** Phase 2: a blizzard can be started now (mirrors game::blizzard_internal's checks). */
 export function blizzardDue(g: GameState, nowMs: number): boolean {
-  return g.status === GameStatus.OPEN && nowMs < g.endsAt && g.blizzardEveryMs > 0 && nowMs >= g.nextBlizzardAt;
+  // The contract refuses a blizzard whose drifts would outlast the hunt.
+  return g.status === GameStatus.OPEN && nowMs + g.blizzardMs <= g.endsAt && g.blizzardEveryMs > 0 && nowMs >= g.nextBlizzardAt;
 }
 
 /** Phase 2: the relic at (x, y) was already claimed, so it is plain ground. */
@@ -323,13 +324,20 @@ export const EventBcs = {
 export type EventName = keyof typeof EventBcs;
 
 export type GameEvent = {
-  [K in EventName]: { name: K; data: ReturnType<(typeof EventBcs)[K]['parse']>; digest: string; checkpoint: string | null };
+  [K in EventName]: {
+    name: K;
+    data: ReturnType<(typeof EventBcs)[K]['parse']>;
+    digest: string;
+    checkpoint: string | null;
+    /** `digest:index`, unique per event: replaying a page never counts an event twice. */
+    id: string;
+  };
 }[EventName];
 
 /** Parses a raw event if it is one of Whiteout's. */
 export function parseEvent(
   packageId: string,
-  e: { eventType: string; bcs: Uint8Array; transactionDigest?: string; checkpoint?: string | null },
+  e: { eventType: string; bcs: Uint8Array; transactionDigest?: string; checkpoint?: string | null; eventIndex?: number },
 ): GameEvent | null {
   const prefix = `${packageId}::game::`;
   if (!e.eventType.startsWith(prefix)) return null;
@@ -341,6 +349,7 @@ export function parseEvent(
     data: layout.parse(e.bcs),
     digest: e.transactionDigest ?? '',
     checkpoint: e.checkpoint ?? null,
+    id: `${e.transactionDigest ?? ''}:${e.eventIndex ?? 0}`,
   } as GameEvent;
 }
 

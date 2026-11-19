@@ -4,7 +4,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import type { NetworkConfig } from './config.js';
 import { sleep } from './errors.js';
 import { encodeIdentity, identityHex } from './identity.js';
-import { decodeTilePlaintext, verifyTile, type Tile } from './messages.js';
+import { decodeTilePlaintext, verifyClueSig, verifyKindSig, type Tile } from './messages.js';
 import * as tx from './tx.js';
 
 export { SealClient, SessionKey };
@@ -51,7 +51,7 @@ export async function decryptTiles(opts: {
   sessionKey: SessionKey;
   tiles: Array<{ x: number; y: number; ct: Uint8Array }>;
   retries?: number;
-}): Promise<Array<{ tile: Tile; verified: boolean }>> {
+}): Promise<Array<{ tile: Tile; verified: boolean; kindOk: boolean; clueOk: boolean }>> {
   const { seal, ctx, gameId, explorerId, tiles } = opts;
   const identities = tiles.map((t) => encodeIdentity(gameId, t.x, t.y));
   const t = new Transaction();
@@ -72,11 +72,15 @@ export async function decryptTiles(opts: {
       await sleep(1000);
     }
   }
-  const out: Array<{ tile: Tile; verified: boolean }> = [];
+  const out: Array<{ tile: Tile; verified: boolean; kindOk: boolean; clueOk: boolean }> = [];
   for (const c of tiles) {
     const pt = await seal.decrypt({ data: c.ct, sessionKey: opts.sessionKey, txBytes });
     const tile = decodeTilePlaintext(c.x, c.y, Uint8Array.from(pt));
-    out.push({ tile, verified: verifyTile(opts.dealerPk, gameId, opts.dealTs, tile) });
+    // Kept apart (spec F6): a valid kind signature still lets the player resolve the
+    // tile on-chain even if its clue fails, so a bad clue can never freeze them.
+    const kindOk = verifyKindSig(opts.dealerPk, gameId, opts.dealTs, tile);
+    const clueOk = verifyClueSig(opts.dealerPk, gameId, opts.dealTs, tile);
+    out.push({ tile, verified: kindOk && clueOk, kindOk, clueOk });
   }
   return out;
 }

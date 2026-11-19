@@ -26,11 +26,6 @@ pub fn idx(x: usize, y: usize) -> usize {
     y * GRID + x
 }
 
-pub fn find_relic(map: &Map) -> (usize, usize) {
-    let i = map.iter().position(|&k| k == RELIC).expect("map has a relic");
-    (i % GRID, i / GRID)
-}
-
 /// Every relic on the map, in row-major order.
 pub fn find_relics(map: &Map) -> Vec<(usize, usize)> {
     map.iter().enumerate().filter(|(_, &k)| k == RELIC).map(|(i, _)| (i % GRID, i / GRID)).collect()

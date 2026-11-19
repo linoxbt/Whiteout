@@ -26,11 +26,15 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
   const account = useCurrentAccount();
   const [map, setMap] = useState<Uint8Array | null>(v.thawMap ?? null);
   const [status, setStatus] = useState<string>('');
+  const [thawing, setThawing] = useState(false);
+  // Keyed on the blob id, not the game object (a new object every poll): one download
+  // per thaw file, even when it fails.
+  const thawBlob = g.thawBlob;
 
   useEffect(() => {
-    if (!g.thawBlob || map) return;
+    if (!thawBlob || map) return;
     setStatus('Loading the thaw file…');
-    readBlob(config.walrusAggregators, g.thawBlob)
+    readBlob(config.walrusAggregators, thawBlob)
       .then((bytes) => {
         const check = verifyThaw(JSON.parse(new TextDecoder().decode(bytes)), g.id, g.dealerPk, g.dealTs);
         if (check.ok) {
@@ -39,10 +43,21 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
         } else setStatus(`The thaw file failed verification: ${check.problems.slice(0, 3).join('; ')}`);
       })
       .catch((e) => setStatus(`Could not load the thaw file: ${(e as Error).message}`));
-  }, [g, map]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thawBlob]);
 
   /** Anyone can thaw the map themselves once the hunt has ended. */
   async function thawMyself() {
+    if (thawing) return;
+    setThawing(true);
+    try {
+      await thawAll();
+    } finally {
+      setThawing(false);
+    }
+  }
+
+  async function thawAll() {
     if (!account) return;
     try {
       setStatus('Downloading 576 tiles…');
@@ -73,7 +88,7 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
   const toWell = v.trail.frozenAt.reduce((n, f) => n + f.toWell, 0n);
   const relic = map ? findRelic(map) : null;
   const relics = map ? findRelics(map) : null;
-  const canWithdraw = me && me.status === ExplorerStatus.ACTIVE && !me.pending && hunt.ended;
+  const canWithdraw = me && me.status === ExplorerStatus.ACTIVE && !me.pending && hunt.ended && me.stake > 0n;
   const unfinalized = g.status === GameStatus.OPEN;
 
   return (
@@ -134,7 +149,7 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
           <div className="actions" style={{ marginBottom: 0 }}>
             {canWithdraw && <button className="primary" disabled={v.busy} onClick={() => void hunt.withdraw()}>Collect your stake</button>}
             {unfinalized && account && <button disabled={v.busy} onClick={() => void hunt.finalize()}>Settle the hunt</button>}
-            {!map && account && <button onClick={() => void thawMyself()}>Thaw the map myself</button>}
+            {!map && account && <button disabled={thawing} onClick={() => void thawMyself()}>{thawing ? 'Thawing…' : 'Thaw the map myself'}</button>}
             <a className="btn arrow" href={`#/hunt/${g.id}/verify`}>Verify</a>
           </div>
         </div>

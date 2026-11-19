@@ -1,16 +1,17 @@
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
 import { WalletHelp } from './components/WalletHelp';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Logo } from './components/Logo';
 import { scrollToId, scrollToTop, useActiveSection, usePointerFx, useRevealAll, useScrollDirection, useSmoothScroll } from './lib/motion';
 import { config } from './config';
-import { useRoute } from './lib/useHunt';
+import { useRoute } from './lib/route';
 import { Home } from './screens/Home';
-import { Hunt } from './screens/Hunt';
-import { Verify } from './screens/Verify';
-import { History } from './screens/History';
-import { Host } from './screens/Host';
+// Only the landing page loads up front; each other route is its own chunk.
+const Hunt = lazy(() => import('./screens/Hunt').then((m) => ({ default: m.Hunt })));
+const Verify = lazy(() => import('./screens/Verify').then((m) => ({ default: m.Verify })));
+const History = lazy(() => import('./screens/History').then((m) => ({ default: m.History })));
+const Host = lazy(() => import('./screens/Host').then((m) => ({ default: m.Host })));
 
 /** Landing sections (scroll) and pages (routes). */
 const NAV: Array<[string, string]> = [
@@ -81,7 +82,7 @@ export function App() {
         <ConnectButton />
       </header>
       <main ref={mainRef} key={key} className={`route ${home ? '' : 'page wrap'}`}>
-        {page}
+        <Suspense fallback={<div className="skeleton-grid" aria-busy="true" />}>{page}</Suspense>
       </main>
       {landing && (
         <footer className="site-foot">

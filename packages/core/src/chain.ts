@@ -41,31 +41,74 @@ export async function getExplorers(client: Client, ids: string[]): Promise<Explo
 }
 
 /**
- * All Whiteout events for one game, oldest first. Events are filtered by module and
- * then by game ID (every Whiteout event carries it). `after` resumes a poll.
+ * All Whiteout events for one game, oldest first, and a cursor to poll for newer ones.
+ *
+ * Full nodes cannot filter events by game, so a first read (`after` null) scans the
+ * package's events newest-first and stops at this game's LobbyCreated: the scan covers
+ * the game's own lifetime, not the package's whole history. Later polls pass the
+ * returned cursor and read forward from it. `complete` is false only when the page
+ * budget ran out; the cursor still moves forward, so the next poll continues.
  */
 export async function listGameEvents(
   client: Client,
   packageId: string,
   gameId: string,
   after: string | null = null,
-): Promise<{ events: GameEvent[]; cursor: string | null }> {
+  maxPages = 400,
+): Promise<{ events: GameEvent[]; cursor: string | null; complete: boolean }> {
+  const mine = (e: Parameters<typeof parseEvent>[1]) => {
+    const parsed = parseEvent(packageId, e);
+    return parsed && sameId((parsed.data as { game_id: string }).game_id, gameId) ? parsed : null;
+  };
+  const filter = { emitModule: `${packageId}::game` };
+  if (after) {
+    const out: GameEvent[] = [];
+    let cursor = after;
+    for (let page = 0; page < maxPages; page++) {
+      const res = await client.core.listEvents({ filter, limit: 50, after: cursor });
+      for (const e of res.events) {
+        const p = mine(e);
+        if (p) out.push(p);
+      }
+      cursor = res.endCursor ?? cursor;
+      if (!res.hasNextPage) return { events: out, cursor, complete: true };
+    }
+    return { events: out, cursor, complete: false };
+  }
+  // Newest first, back to the game's creation.
+  const back: GameEvent[] = [];
+  let newest: string | null = null;
+  let before: string | null = null;
+  try {
+    for (let page = 0; page < maxPages; page++) {
+      const res = await client.core.listEvents({ filter, limit: 50, order: 'descending', ...(before ? { before } : {}) });
+      if (page === 0) newest = res.startCursor ?? null;
+      for (const e of res.events) {
+        const p = mine(e);
+        if (!p) continue;
+        back.push(p);
+        if (p.name === 'LobbyCreated') return { events: back.reverse(), cursor: newest, complete: true };
+      }
+      before = res.endCursor ?? before;
+      if (!res.hasNextPage) return { events: back.reverse(), cursor: newest, complete: true };
+    }
+    return { events: back.reverse(), cursor: newest, complete: false };
+  } catch (e) {
+    // Past the node's pruned edge: read forward from the earliest event it still has.
+    if (!/earliest available|pruned|below/i.test((e as Error).message)) throw e;
+  }
   const out: GameEvent[] = [];
-  let cursor = after;
-  for (let page = 0; page < 200; page++) {
-    const res = await client.core.listEvents({
-      filter: { emitModule: `${packageId}::game` },
-      limit: 50,
-      ...(cursor ? { after: cursor } : {}),
-    });
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await client.core.listEvents({ filter, limit: 50, ...(cursor ? { after: cursor } : {}) });
     for (const e of res.events) {
-      const parsed = parseEvent(packageId, e);
-      if (parsed && sameId((parsed.data as { game_id: string }).game_id, gameId)) out.push(parsed);
+      const p = mine(e);
+      if (p) out.push(p);
     }
     cursor = res.endCursor ?? cursor;
-    if (!res.hasNextPage) break;
+    if (!res.hasNextPage) return { events: out, cursor, complete: true };
   }
-  return { events: out, cursor };
+  return { events: out, cursor, complete: false };
 }
 
 /**
@@ -112,8 +155,10 @@ export async function onAllowlist(client: Client, list: AllowlistState, address:
       name: { type: 'address', bcs: bcs.Address.serialize(address).toBytes() },
     });
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    // Only a missing field means "not a member"; a network error must not lock a member out.
+    if (/not.?found|does not exist|NotExists|dynamic field/i.test((e as Error).message)) return false;
+    throw e;
   }
 }
 
@@ -152,6 +197,8 @@ export interface Trail {
   finders: Array<{ rank: number; finder: string; explorerId: string; pot: bigint; x: number; y: number }>;
   blizzards: number;
   dealt: { dealerKind: number; enclaveId: string | null; openAt: number; endsAt: number } | null;
+  /** Event ids already applied: applying the same event twice changes nothing. */
+  seen: Set<string>;
 }
 
 export function emptyTrail(): Trail {
@@ -165,11 +212,15 @@ export function emptyTrail(): Trail {
     finders: [],
     blizzards: 0,
     dealt: null,
+    seen: new Set(),
   };
 }
 
 export function applyEvents(trail: Trail, events: GameEvent[]): Trail {
+  trail.seen ??= new Set();
   for (const ev of events) {
+    if (ev.id && trail.seen.has(ev.id)) continue;
+    if (ev.id) trail.seen.add(ev.id);
     switch (ev.name) {
       case 'PrizeDeposited': {
         // type_name::into_string omits every 0x, including inside type arguments.

@@ -123,16 +123,21 @@ export function createAllowlist(c: Pick<Ctx, 'packageId'>, p: { name: string; ow
 }
 
 /** Adds or removes members, in batches of at most 1 000 per call. */
+/** Addresses per allowlist call, and calls per transaction (128 KiB transaction limit). */
+export const ALLOWLIST_CALL_BATCH = 400;
+export const ALLOWLIST_TX_BATCH = 2000;
+
 export function editAllowlist(
   c: Pick<Ctx, 'packageId'>,
   p: { listId: string; capId: string; add?: string[]; remove?: string[] },
   tx = new Transaction(),
 ) {
   for (const [fn, list] of [['add', p.add ?? []], ['remove', p.remove ?? []]] as const) {
-    for (let i = 0; i < list.length; i += 1000) {
+    // 400 addresses (12.8 KB) per call stays under Sui's 16 KiB limit for one pure argument.
+    for (let i = 0; i < list.length; i += ALLOWLIST_CALL_BATCH) {
       tx.moveCall({
         target: `${c.packageId}::allowlist::${fn}`,
-        arguments: [tx.object(p.listId), tx.object(p.capId), tx.pure.vector('address', list.slice(i, i + 1000))],
+        arguments: [tx.object(p.listId), tx.object(p.capId), tx.pure.vector('address', list.slice(i, i + ALLOWLIST_CALL_BATCH))],
       });
     }
   }
@@ -174,11 +179,22 @@ export function cancel(
   return tx;
 }
 
+/** The registry and pinned config an enclave deal must cite; throws if not deployed. */
+export function dealerObjects(cfg: { dealerRegistryId?: string; enclaveConfigId: string }) {
+  if (!cfg.dealerRegistryId || !cfg.enclaveConfigId) {
+    throw new Error('No dealer enclave is registered on this network yet (dealerRegistryId / enclaveConfigId missing).');
+  }
+  return { registryId: cfg.dealerRegistryId, configId: cfg.enclaveConfigId };
+}
+
 export function sealDealEnclave(
   c: Ctx,
   p: {
     gameId: string;
     capId: string;
+    /** The shared DealerRegistry and its pinned EnclaveConfig<DEALER>. */
+    registryId: string;
+    configId: string;
     enclaveId: string;
     dealTs: bigint;
     ctHash: Uint8Array;
@@ -193,6 +209,8 @@ export function sealDealEnclave(
     arguments: [
       tx.object(p.gameId),
       tx.object(p.capId),
+      tx.object(p.registryId),
+      tx.object(p.configId),
       tx.object(p.enclaveId),
       tx.pure.u64(p.dealTs),
       tx.pure.vector('u8', p.ctHash),

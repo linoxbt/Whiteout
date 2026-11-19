@@ -5,10 +5,11 @@
 # - Setup script for nautilus-server that acts as an init script
 # - Sets up Python and library paths
 # - Configures loopback network and /etc/hosts
-# - Waits for secrets.json to be passed from the parent instance. 
 # - Forwards VSOCK port 3000 to localhost:3000
-# - Optionally pulls secrets and sets in environmen variables.
 # - Launches nautilus-server
+# WHITEOUT: the template's secrets channel (VSOCK 7777, exported into the
+# environment) is removed. The dealer reads no environment variables, and nothing
+# the parent instance supplies may reach the enclave process.
 
 set -e # Exit immediately if a command exits with a non-zero status
 echo "run.sh script is running"
@@ -27,13 +28,6 @@ echo "127.0.0.1   localhost" > /etc/hosts
 # == ATTENTION: code should be generated here that parses allowed_endpoints.yaml and populate domains here ===
 
 cat /etc/hosts
-
-# Get a json blob with key/value pair for secrets
-JSON_RESPONSE=$(socat - VSOCK-LISTEN:7777,reuseaddr)
-# Sets all key value pairs as env variables that will be referred by the server
-# This is shown as a example below. For production usecases, it's best to set the
-# keys explicitly rather than dynamically.
-echo "$JSON_RESPONSE" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > /tmp/kvpairs ; while IFS="=" read -r key value; do export "$key"="$value"; done < /tmp/kvpairs ; rm -f /tmp/kvpairs
 
 # Run traffic forwarder in background and start the server
 # Forwards traffic from 127.0.0.x -> Port 443 at CID 3 Listening on port 800x

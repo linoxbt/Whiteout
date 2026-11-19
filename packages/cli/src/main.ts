@@ -282,7 +282,7 @@ program
     const common = { gameId: o.game, capId: rec.capId, dealTs: BigInt(d.dealTs), ctHash: fromHex(d.ctHash), quiltId: rec.quiltId };
     const t =
       d.kind === 'enclave'
-        ? tx.sealDealEnclave(ctx, { ...common, enclaveId: d.enclaveId!, dealSig: fromHex(d.dealSig) })
+        ? tx.sealDealEnclave(ctx, { ...common, ...tx.dealerObjects(e.cfg), enclaveId: d.enclaveId!, dealSig: fromHex(d.dealSig) })
         : tx.sealDealCeremony(ctx, { ...common, dealerPk: fromHex(d.dealerPk) });
     const r = await exec(e, t);
     const { game } = await gameCtx(e, o.game);

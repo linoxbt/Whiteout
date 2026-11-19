@@ -44,16 +44,31 @@ export function alertsFor(prev: WatchSample | null, cur: WatchSample, errorRateT
   return out;
 }
 
+/** Last good beacon counts per sponsor and game, reused when /stats answers 429/503. */
+const lastStats = new Map<string, { keyFetchErrors: number; reveals: number }>();
+
+/**
+ * Sponsor contract: GET /health is 200 { ok: true, version } when the sponsor and its
+ * store are up (503 { ok: false } otherwise); GET /stats/:gameId is 200
+ * { key_fetch_error, reveal_ok }, rate-limited per IP (429) and 503 when the store is down.
+ */
 export async function sponsorSample(sponsorUrl: string | undefined, gameId: string) {
   if (!sponsorUrl) return { sponsorUp: null, keyFetchErrors: 0, reveals: 0 };
+  const key = `${sponsorUrl} ${gameId}`;
+  const last = lastStats.get(key) ?? { keyFetchErrors: 0, reveals: 0 };
   try {
     const [health, stats] = await Promise.all([
       fetch(`${sponsorUrl}/health`, { signal: AbortSignal.timeout(5000) }),
       fetch(`${sponsorUrl}/stats/${gameId}`, { signal: AbortSignal.timeout(5000) }),
     ]);
+    // A refused /stats (rate limit, store down) must not read as counters dropping to zero,
+    // or the next good sample would look like a burst of key-fetch errors.
+    if (!stats.ok) return { sponsorUp: health.ok, ...last };
     const s = (await stats.json()) as { key_fetch_error?: number; reveal_ok?: number };
-    return { sponsorUp: health.ok, keyFetchErrors: s.key_fetch_error ?? 0, reveals: s.reveal_ok ?? 0 };
+    const cur = { keyFetchErrors: s.key_fetch_error ?? 0, reveals: s.reveal_ok ?? 0 };
+    lastStats.set(key, cur);
+    return { sponsorUp: health.ok, ...cur };
   } catch {
-    return { sponsorUp: false, keyFetchErrors: 0, reveals: 0 };
+    return { sponsorUp: false, ...last };
   }
 }

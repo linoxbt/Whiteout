@@ -8,3 +8,7 @@ target/
 *.tsbuildinfo
 load-report.json
 e2e/build.json
+!.env.example
+move/**/Move.lock
+enclave/whiteout-dealer/out/
+.vercel/

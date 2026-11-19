@@ -2,10 +2,10 @@
 import { createDAppKit } from '@mysten/dapp-kit-react';
 import { enokiWalletsInitializer } from '@mysten/enoki';
 import { makeClient } from '@whiteout/core';
-import { config } from './config';
+import { config, googleLogin } from './config';
 
 const enoki =
-  config.enokiPublicKey && config.googleClientId
+  googleLogin && config.enokiPublicKey && config.googleClientId
     ? [
         enokiWalletsInitializer({
           apiKey: config.enokiPublicKey,

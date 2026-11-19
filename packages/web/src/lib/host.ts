@@ -170,6 +170,11 @@ export async function enclaveDealInBrowser(
   durationMs: number,
   onProgress: (msg: string) => void,
 ): Promise<StoredDeal> {
+  if (typeof location !== 'undefined' && location.protocol === 'https:' && /^http:\/\//i.test(enclaveUrl)) {
+    throw new Error(
+      'Browsers block plain http:// calls from this https page. Serve the enclave over HTTPS (TLS on its parent instance, see expose_enclave.sh) or deal from the CLI: whiteout deal --enclave <url>.',
+    );
+  }
   onProgress('Requesting a deal from the enclave…');
   const res = await fetch(`${enclaveUrl.replace(/\/$/, '')}/deal`, {
     method: 'POST',

@@ -19,5 +19,11 @@ export const config: NetworkConfig & { upgradeCapIds: string[]; dealerEnclaveId?
 
 export const configured = Boolean(config.packageId);
 
+/**
+ * Google sign-in and sponsored gas go together: a zkLogin account starts with no SUI,
+ * so Google is offered only when the sponsor is configured as well.
+ */
+export const googleLogin = Boolean(config.enokiPublicKey && config.googleClientId && config.sponsorUrl);
+
 /** One read client for the whole page. */
 export const suiClient = makeClient(config);

@@ -1,19 +1,22 @@
 # Web client (spec section 21). Netlify site: whiteout-hunt.
 [build]
   base = "/"
-  command = "pnpm install --frozen-lockfile && pnpm --filter @whiteout/web exec vite build"
+  command = "pnpm install --frozen-lockfile && pnpm --filter @whiteout/web build"
   publish = "packages/web/dist"
 
 [build.environment]
   NODE_VERSION = "22"
   VITE_NETWORK = "testnet"
 
+# Also in packages/web/public/_headers, which zip/API deploys use.
 [[headers]]
   for = "/*"
   [headers.values]
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: wss:; frame-src https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 [[headers]]
   for = "/assets/*"

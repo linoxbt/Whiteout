@@ -87,6 +87,8 @@ export interface Tile {
   hazards: number;
   kindSig: Uint8Array;
   clueSig: Uint8Array;
+  /** Set false by the client when the clue signature failed: warmth and hazards are not shown. */
+  clueOk?: boolean;
 }
 
 export function encodeTilePlaintext(t: Tile): Uint8Array {

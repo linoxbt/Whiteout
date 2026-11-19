@@ -5,9 +5,9 @@ import { Mark } from '../components/Logo';
 import { TrailDemo } from '../components/TrailDemo';
 import { HuntTags } from '../components/Phase2';
 import { CountUp, Disclosure, Words, scrollToId } from '../lib/motion';
-import { config, configured, suiClient } from '../config';
+import { config, configured, googleLogin, suiClient } from '../config';
 import { amount, dealerBadge, shortId, statusLabel, timeLeft } from '../lib/format';
-import { useTick } from '../lib/useHunt';
+import { useTick } from '../lib/route';
 
 const FIELD_GUIDE = [
   { word: 'Snow', desc: 'Safe ground. Every tile you reach tells you how warm you are and how many crevasses lie next to you.' },
@@ -45,7 +45,12 @@ const PIPELINE = [
 
 const FAQ = [
   { q: 'Can the host see the map?', a: 'Not in an enclave-dealt hunt: the map is drawn inside the enclave and only ever leaves it sealed. A host can also deal a map themselves for practice, but the contract labels it a ceremony hunt and makes it free to enter.' },
-  { q: 'What do I need to play?', a: 'A Sui wallet or a Google sign-in through zkLogin. Every step is a small transaction; when a hunt is sponsored, its gas is covered for you.' },
+  {
+    q: 'What do I need to play?',
+    a: googleLogin
+      ? 'A Google sign-in through zkLogin (gas is covered for you) or any Sui wallet.'
+      : `Any Sui wallet set to ${config.network}. Every step is a small transaction from your wallet.`,
+  },
   { q: 'What happens if nobody finds the relic?', a: 'After the deadline anyone can settle the hunt. The pot goes to the well fund, every surviving yeti takes its stake back, and the host reclaims the prize.' },
   { q: 'Can I stall to avoid a crevasse?', a: 'No. Each step must be revealed within a short window. After that anyone can freeze the yeti, even once the hunt has ended.' },
   { q: 'How do I know it was fair?', a: 'Open the verify page of any finished hunt. It downloads the thawed map from Walrus, checks it against the hash committed on Sui, and checks the dealer signature on every tile.' },

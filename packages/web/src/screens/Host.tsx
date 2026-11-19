@@ -5,7 +5,7 @@
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { Transaction } from '@mysten/sui/transactions';
 import { ConnectButton } from '@mysten/dapp-kit-react/ui';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Blizzard,
   ExplorerStatus,
@@ -19,6 +19,7 @@ import {
   getGame,
   isEnded,
   listGameEvents,
+  sameId,
   tx,
   type AllowlistState,
   type GameState,
@@ -40,10 +41,12 @@ import {
   type StoredDeal,
 } from '../lib/host';
 import { Words } from '../lib/motion';
-import { useTick } from '../lib/useHunt';
+import { useTick } from '../lib/route';
 
 const SUI = '0x2::sui::SUI';
+/** For new hunts and allowlists. A hunt's own actions use its coin type (`ctxOf`). */
 const ctx = { packageId: config.packageId, coinType: SUI };
+const ctxOf = (coinType: string) => ({ packageId: config.packageId, coinType });
 const toMist = (s: string) => BigInt(Math.round(Number(s || '0') * 1e9));
 
 function useAction() {
@@ -102,10 +105,17 @@ function HostHead({ title = 'Host console' }: { title?: string }) {
 
 function Console({ address }: { address: string }) {
   const [hunts, setHunts] = useState<Array<{ capId: string; g: GameState }> | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const reload = useCallback(async () => {
-    const caps = await myHostCaps(address);
-    const games = await Promise.all(caps.map(async (c) => ({ capId: c.capId, g: await getGame(suiClient, c.gameId).catch(() => null) })));
-    setHunts(games.filter((x): x is { capId: string; g: GameState } => !!x.g).sort((a, b) => (b.g.openAt || 9e15) - (a.g.openAt || 9e15)));
+    try {
+      const caps = await myHostCaps(address);
+      const games = await Promise.all(caps.map(async (c) => ({ capId: c.capId, g: await getGame(suiClient, c.gameId).catch(() => null) })));
+      setHunts(games.filter((x): x is { capId: string; g: GameState } => !!x.g).sort((a, b) => (b.g.openAt || 9e15) - (a.g.openAt || 9e15)));
+      setListError(null);
+    } catch (e) {
+      setListError((e as Error).message);
+      setHunts((h) => h ?? []);
+    }
   }, [address]);
   useEffect(() => void reload(), [reload]);
   const now = Date.now();
@@ -113,6 +123,11 @@ function Console({ address }: { address: string }) {
   return (
     <section className="host">
       <HostHead />
+      {listError && (
+        <div className="banner error" role="alert">
+          Could not read your hunts: {listError.slice(0, 140)} <button onClick={() => void reload()}>Retry</button>
+        </div>
+      )}
       <div className="host-grid">
         <div>
           <div className="section-head" style={{ marginBottom: 14 }}>
@@ -161,6 +176,7 @@ function nextStep(g: GameState, now: number): string {
 function CreateHunt({ address, onCreated }: { address: string; onCreated: () => void }) {
   const { busy, msg, act } = useAction();
   const [well, setWell] = useState('');
+  const [wellCheck, setWellCheck] = useState('');
   const [stake, setStake] = useState('0');
   const [players, setPlayers] = useState(64);
   const [hours, setHours] = useState(2);
@@ -182,7 +198,11 @@ function CreateHunt({ address, onCreated }: { address: string; onCreated: () => 
   };
   const sum = shares.reduce((a, b) => a + b, 0);
   const lastsOk = !blizzards || (everyMin >= 10 && lastsMin >= 1 && lastsMin <= 15 && lastsMin * 3 <= everyMin);
-  const valid = /^0x[0-9a-fA-F]{1,64}$/.test(well.trim()) && sum === 100 && lastsOk && hours >= 1 && hours <= 72;
+  const wellOk = /^0x[0-9a-fA-F]{1,64}$/.test(well.trim());
+  // F17: retype the last 6 characters, so a pasted wrong address is caught.
+  const wellConfirmed = wellOk && wellCheck.trim().toLowerCase() === well.trim().toLowerCase().slice(-6);
+  const wellIsHost = wellOk && sameId(well.trim(), address);
+  const valid = wellConfirmed && sum === 100 && lastsOk && hours >= 1 && hours <= 72;
 
   return (
     <form
@@ -212,8 +232,16 @@ function CreateHunt({ address, onCreated }: { address: string; onCreated: () => 
           const game = r.created.find((c) => c.type.includes('::game::Game<'));
           const cap = r.created.find((c) => c.type.endsWith('::game::HostCap'));
           if (!game || !cap) throw new Error('Created, but the new Game was not in the effects. Refresh.');
-          if (listId) await runHost(tx.setAllowlist(ctx, { gameId: game.id, capId: cap.id, listId }), address);
           onCreated();
+          if (listId) {
+            try {
+              await runHost(tx.setAllowlist(ctx, { gameId: game.id, capId: cap.id, listId }), address);
+            } catch (e) {
+              // The hunt exists but is not gated yet: open it so the host can gate it there.
+              location.hash = `#/host/${game.id}`;
+              throw new Error(`The hunt was created, but gating it failed (${(e as Error).message}). Gate it from its page before dealing.`);
+            }
+          }
           location.hash = `#/host/${game.id}`;
         });
       }}
@@ -225,6 +253,13 @@ function CreateHunt({ address, onCreated }: { address: string; onCreated: () => 
         <input value={well} onChange={(e) => setWell(e.target.value)} placeholder="0x… (Lofi well fund)" spellCheck={false} required />
         <small>Half of every frozen stake and any unclaimed pot is paid here, on-chain.</small>
       </label>
+      {wellOk && (
+        <label className="field">
+          <span>Confirm: last 6 characters of the well-fund address</span>
+          <input value={wellCheck} onChange={(e) => setWellCheck(e.target.value)} maxLength={6} spellCheck={false} required />
+          {wellIsHost && <small className="warn">This is your own address: players will see that frozen stakes go to the host.</small>}
+        </label>
+      )}
       <div className="field-row">
         <label className="field">
           <span>Entry stake (SUI)</span>
@@ -348,7 +383,7 @@ function Allowlists({ address }: { address: string }) {
                     const addrs = [...new Set((paste[list.id] ?? '').split(/[\s,]+/).map((a) => a.trim().toLowerCase()).filter((a) => /^0x[0-9a-f]{1,64}$/.test(a)))];
                     if (!addrs.length) throw new Error('No valid addresses.');
                     for (let i = 0; i < addrs.length; i += 4000) {
-                      await runHost(tx.editAllowlist(ctx, { listId: list.id, capId, [verb]: addrs.slice(i, i + 4000) }), address);
+                      await runHost(tx.editAllowlist(ctx, { listId: list.id, capId, [verb]: addrs.slice(i, i + tx.ALLOWLIST_TX_BATCH) }), address);
                     }
                     setPaste({ ...paste, [list.id]: '' });
                     await reload();
@@ -397,25 +432,50 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
   const [overdue, setOverdue] = useState<string[]>([]);
   const [progress, setProgress] = useState('');
 
+  // Events are read once back to the game's creation, then polled forward from a cursor.
+  const events = useRef<{ trail: Trail; cursor: string | null; busy: boolean }>({ trail: emptyTrail(), cursor: null, busy: false });
+  const [loadError, setLoadError] = useState<string | null>(null);
   const reload = useCallback(async () => {
-    const [game, page] = await Promise.all([getGame(suiClient, gameId), listGameEvents(suiClient, config.packageId, gameId)]);
-    const t = applyEvents(emptyTrail(), page.events);
-    setG(game);
-    setTrail(t);
-    if (game.status === GameStatus.OPEN) {
-      const xs = await getExplorers(suiClient, [...t.explorers.keys()]).catch(() => []);
-      setOverdue(xs.filter((x) => x.status === ExplorerStatus.ACTIVE && x.pending && Date.now() > x.pending.deadlineMs).map((x) => x.id));
+    const st = events.current;
+    if (st.busy) return;
+    st.busy = true;
+    try {
+      const [game, page] = await Promise.all([getGame(suiClient, gameId), listGameEvents(suiClient, config.packageId, gameId, st.cursor)]);
+      st.cursor = page.cursor ?? st.cursor;
+      const t = applyEvents(st.trail, page.events);
+      setG(game);
+      setTrail({ ...t });
+      setLoadError(null);
+      if (game.status === GameStatus.OPEN) {
+        const xs = await getExplorers(suiClient, [...t.explorers.keys()]).catch(() => []);
+        setOverdue(xs.filter((x) => x.status === ExplorerStatus.ACTIVE && x.pending && Date.now() > x.pending.deadlineMs).map((x) => x.id));
+      }
+    } catch (e) {
+      setLoadError((e as Error).message);
+    } finally {
+      st.busy = false;
     }
   }, [gameId]);
   useEffect(() => {
+    events.current = { trail: emptyTrail(), cursor: null, busy: false };
     void reload();
-    void myHostCaps(address).then((caps) => setCapId(caps.find((c) => c.gameId === gameId)?.capId ?? null));
-    void loadDeal(gameId).then((d) => setDeal(d ?? null));
+    myHostCaps(address)
+      .then((caps) => setCapId(caps.find((c) => c.gameId === gameId)?.capId ?? null))
+      .catch((e) => setLoadError((e as Error).message));
+    void loadDeal(gameId).then((d) => setDeal(d ?? null)).catch(() => setDeal(null));
     const t = setInterval(() => void reload(), 6000);
     return () => clearInterval(t);
   }, [reload, address, gameId]);
 
+  if (loadError && (!g || capId === undefined)) {
+    return (
+      <div className="banner error" role="alert">
+        Could not load this hunt: {loadError.slice(0, 160)} <button onClick={() => void reload()}>Retry</button>
+      </div>
+    );
+  }
   if (!g || capId === undefined) return <div className="skeleton-grid" aria-busy="true" />;
+  const ctx = ctxOf(g.coinType);
   if (!capId) {
     return (
       <section className="host">
@@ -435,6 +495,16 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
     });
 
   const steps: Array<{ title: string; done: boolean; active: boolean; body: React.ReactNode }> = [
+    ...(g.status === GameStatus.LOBBY && !g.allowlist
+      ? [
+          {
+            title: 'Holders only (optional)',
+            done: false,
+            active: false,
+            body: <GateStep address={address} busy={busy} onGate={(listId: string) => void run('gate', tx.setAllowlist(ctx, { gameId: g.id, capId, listId }), 'The hunt is now for list members only.')} />,
+          },
+        ]
+      : []),
     {
       title: `Prizes (${g.prizesDeposited}/${g.relics})`,
       done: g.prizesDeposited === g.relics,
@@ -478,7 +548,7 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
               const common = { gameId: g.id, capId, dealTs: BigInt(deal.dealTs), ctHash: fromHex(deal.ctHash), quiltId: deal.quiltId };
               const t =
                 deal.kind === 'enclave'
-                  ? tx.sealDealEnclave(ctx, { ...common, enclaveId: deal.enclaveId!, dealSig: fromHex(deal.dealSig) })
+                  ? tx.sealDealEnclave(ctx, { ...common, ...tx.dealerObjects(config), enclaveId: deal.enclaveId!, dealSig: fromHex(deal.dealSig) })
                   : tx.sealDealCeremony(ctx, { ...common, dealerPk: fromHex(deal.dealerPk) });
               void run('open', t, 'The hunt is open.');
             }}
@@ -629,6 +699,31 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
   );
 }
 
+/** Gate a lobby behind one of the host's allowlists (also the retry after a failed create). */
+function GateStep({ address, busy, onGate }: { address: string; busy: string | null; onGate: (listId: string) => void }) {
+  const [lists, setLists] = useState<AllowlistState[] | null>(null);
+  const [listId, setListId] = useState('');
+  useEffect(() => {
+    myAllowlistCaps(address)
+      .then((caps) => Promise.all(caps.map((c) => getAllowlist(suiClient, c.listId))))
+      .then(setLists)
+      .catch(() => setLists([]));
+  }, [address]);
+  if (!lists) return <p className="small">Reading your allowlists…</p>;
+  if (!lists.length) return <p className="small">You have no allowlists. Create one in the console to gate a hunt.</p>;
+  return (
+    <div className="actions">
+      <select value={listId} onChange={(e) => setListId(e.target.value)} aria-label="Allowlist">
+        <option value="">Choose a list…</option>
+        {lists.map((l) => (
+          <option key={l.id} value={l.id}>{l.name} ({l.size})</option>
+        ))}
+      </select>
+      <button disabled={!!busy || !listId} onClick={() => onGate(listId)}>Gate the hunt</button>
+    </div>
+  );
+}
+
 function PrizeStep({
   g,
   capId,
@@ -659,7 +754,7 @@ function PrizeStep({
           disabled={!!busy || !/^0x[0-9a-fA-F]{1,64}$/.test(objectId.trim())}
           onClick={async () => {
             const { object } = await suiClient.core.getObject({ objectId: objectId.trim() });
-            void onRun('prize', tx.depositPrize(ctx, { gameId: g.id, capId, prizeId: objectId.trim(), prizeType: object.type }), `Prize ${rank} is in escrow.`);
+            void onRun('prize', tx.depositPrize(ctxOf(g.coinType), { gameId: g.id, capId, prizeId: objectId.trim(), prizeType: object.type }), `Prize ${rank} is in escrow.`);
           }}
         >
           Deposit object

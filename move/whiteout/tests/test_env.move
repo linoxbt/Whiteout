@@ -150,9 +150,12 @@ public fun open_game(entry_stake: u64, max_players: u16): (Game<SUI>, HostCap, E
 public fun deal_enclave(env: &mut Env, g: &mut Game<SUI>, cap: &HostCap, sig: vector<u8>) {
     let mut ctx = env.ctx(HOST);
     let enc = enclave::new_enclave_for_testing<DEALER>(fixtures::dealer_pk(), &mut ctx);
+    let (reg, config) = whiteout::dealer::new_for_testing(&mut ctx);
     game::seal_deal_enclave(
         g,
         cap,
+        &reg,
+        &config,
         &enc,
         fixtures::deal_ts(),
         fixtures::ct_hash(),
@@ -161,6 +164,7 @@ public fun deal_enclave(env: &mut Env, g: &mut Game<SUI>, cap: &HostCap, sig: ve
         &env.clock,
     );
     enc.destroy();
+    whiteout::dealer::destroy_for_testing(reg, config);
 }
 
 public fun ctx(env: &mut Env, sender: address): TxContext {

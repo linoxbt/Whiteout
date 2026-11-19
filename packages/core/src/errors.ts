@@ -39,6 +39,11 @@ export const ABORTS: Record<number, AbortInfo> = {
   28: { code: 28, name: 'ENoBlizzard', message: 'No blizzard is due yet.', action: 'none' },
   29: { code: 29, name: 'ENotAdmin', message: 'That allowlist pass belongs to another list.', action: 'none' },
   30: { code: 30, name: 'EBatchTooLarge', message: 'Add at most 1 000 addresses per call.', action: 'none' },
+  31: { code: 31, name: 'ENotAdmin', message: 'Only the publisher may change the dealer config.', action: 'none' },
+  32: { code: 32, name: 'EConfigExists', message: 'The dealer config is already pinned.', action: 'none' },
+  33: { code: 33, name: 'EBadPcrs', message: 'Those PCRs are not from a release build.', action: 'none' },
+  34: { code: 34, name: 'EWrongConfig', message: 'That is not the pinned dealer config.', action: 'none' },
+  35: { code: 35, name: 'EStaleEnclave', message: 'That dealer enclave registered against old PCRs. Register the current build.', action: 'none' },
 };
 
 export class WhiteoutAbort extends Error {

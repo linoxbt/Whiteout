@@ -17,6 +17,8 @@ export interface NetworkConfig {
   enclavePackageId: string;
   /** EnclaveConfig<DEALER> object ID; used by the Verify page to show the expected PCRs. */
   enclaveConfigId: string;
+  /** Shared DealerRegistry: holds Cap<DEALER> and pins the one dealer config. */
+  dealerRegistryId?: string;
   sealServers: SealServer[];
   sealThreshold: number;
   walrusAggregators: string[];

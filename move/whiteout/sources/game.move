@@ -13,7 +13,7 @@
 /// tests can check every amount.
 module whiteout::game;
 
-use enclave::enclave::Enclave;
+use enclave::enclave::{Enclave, EnclaveConfig};
 use std::type_name;
 use sui::random::{Self, Random, RandomGenerator};
 use sui::balance::{Self, Balance};
@@ -24,7 +24,7 @@ use sui::event;
 use sui::table::{Self, Table};
 use whiteout::allowlist::Allowlist;
 use whiteout::bitmap;
-use whiteout::dealer::DEALER;
+use whiteout::dealer::{Self, DEALER, DealerRegistry};
 use whiteout::tiles;
 
 // === Game status ===
@@ -232,6 +232,14 @@ public struct BlizzardStarted has copy, drop {
 
 public struct LobbyCancelled has copy, drop { game_id: ID }
 
+/// Emitted with GameDealt for enclave deals: which pinned config and PCR version.
+public struct EnclaveDealt has copy, drop {
+    game_id: ID,
+    enclave_id: ID,
+    config_id: ID,
+    config_version: u64,
+}
+
 public struct GameDealt has copy, drop {
     game_id: ID,
     dealer_kind: u8,
@@ -423,7 +431,8 @@ public(package) fun new_ranked_lobby<T>(
     assert!(relics >= 1 && relics <= MAX_RELICS, EBadParam);
     assert!(pot_shares.length() == (relics as u64), EBadParam);
     let mut total = 0;
-    pot_shares.do_ref!(|b| total = total + (*b as u64));
+    // Every rank takes a share: a zero share on the last rank would strand the pot.
+    pot_shares.do_ref!(|b| { assert!(*b > 0, EBadParam); total = total + (*b as u64) });
     assert!(total == BPS, EBadParam);
     assert!(
         (blizzard_every_ms == 0 && blizzard_ms == 0) ||
@@ -541,6 +550,8 @@ public fun cancel_empty<T>(g: &mut Game<T>, cap: &HostCap) {
 public fun seal_deal_enclave<T>(
     g: &mut Game<T>,
     cap: &HostCap,
+    registry: &DealerRegistry,
+    config: &EnclaveConfig<DEALER>,
     enclave: &Enclave<DEALER>,
     deal_ts: u64,
     ct_hash: vector<u8>,
@@ -555,6 +566,15 @@ public fun seal_deal_enclave<T>(
     assert!(!quilt_id.is_empty(), EBadParam);
     let payload = tiles::deal_payload(g.id.to_inner(), g.relics, ct_hash);
     assert!(enclave.verify_signature(tiles::intent_deal(), deal_ts, payload, &sig), EBadSig);
+    // Only an enclave registered against the pinned dealer config, at its current
+    // PCRs, may deal: a debug or since-rotated build cannot.
+    dealer::assert_current(registry, config, enclave);
+    event::emit(EnclaveDealt {
+        game_id: g.id.to_inner(),
+        enclave_id: object::id(enclave),
+        config_id: object::id(config),
+        config_version: config.version(),
+    });
     open(
         g,
         DEALER_ENCLAVE,
@@ -901,7 +921,8 @@ public fun pot_share<T>(g: &Game<T>, rank: u8): u64 {
 // =====================================================================
 
 /// Anyone may start a due blizzard. It drops `MAX_DRIFTS` snowdrifts on random
-/// tiles: none on base camp, at most `MAX_DRIFTS_PER_ROW` in any row. A drift only
+/// tiles: none on base camp, none next to another drift, at most `MAX_DRIFTS_PER_ROW`
+/// in any row, and only if the drifts melt before the hunt ends. A drift only
 /// stops yetis stepping onto it; nobody is moved. Drifts melt after `blizzard_ms`,
 /// so the dealer-checked path to every relic is always open again. Private entry:
 /// randomness is never readable by another module mid-transaction.
@@ -914,6 +935,8 @@ public(package) fun blizzard_internal<T>(g: &mut Game<T>, gen: &mut RandomGenera
     let now = clock.timestamp_ms();
     assert!(g.status == OPEN && now < g.ends_at, EEnded);
     assert!(g.weather.every_ms > 0 && now >= g.weather.next_at, ENoBlizzard);
+    // Drifts always melt before the hunt ends, so they never decide its outcome.
+    assert!(now + g.weather.lasts_ms <= g.ends_at, ENoBlizzard);
     let mut per_row = vector[];
     (GRID as u64).do!(|_| per_row.push_back(0u64));
     let mut drifts = vector[];
@@ -923,7 +946,7 @@ public(package) fun blizzard_internal<T>(g: &mut Game<T>, gen: &mut RandomGenera
         let tile = tiles::index(x, y);
         let row = (y as u64);
         let in_row = per_row[row];
-        if (!drifts.contains(&tile) && in_row < MAX_DRIFTS_PER_ROW) {
+        if (in_row < MAX_DRIFTS_PER_ROW && !near_drift(&drifts, x, y)) {
             drifts.push_back(tile);
             *vector::borrow_mut(&mut per_row, row) = in_row + 1;
         };
@@ -939,6 +962,23 @@ public(package) fun blizzard_internal<T>(g: &mut Game<T>, gen: &mut RandomGenera
         until_ms: g.weather.until_ms,
         next_ms: g.weather.next_at,
     });
+}
+
+/// True if a drift lies within one tile (8 directions) of (x, y). Keeping drifts
+/// apart means at most two of any tile's four neighbours are ever covered, so no
+/// tile (a yeti's, or a relic's) is ever walled in.
+fun near_drift(drifts: &vector<u16>, x: u8, y: u8): bool {
+    let mut i = 0;
+    while (i < drifts.length()) {
+        let t = drifts[i];
+        let dx = ((t % (GRID as u16)) as u8);
+        let dy = ((t / (GRID as u16)) as u8);
+        let ax = if (dx > x) dx - x else x - dx;
+        let ay = if (dy > y) dy - y else y - dy;
+        if (ax <= 1 && ay <= 1) return true;
+        i = i + 1;
+    };
+    false
 }
 
 /// True while a drift covers (x, y).
@@ -1029,6 +1069,8 @@ public fun publish_thaw<T>(g: &mut Game<T>, cap: &HostCap, blob_id: vector<u8>, 
     assert_host(g, cap);
     assert!(is_ended(g, clock), ENotEnded);
     assert!(!blob_id.is_empty(), EBadParam);
+    // Published once: a verified thaw cannot be swapped for another file later.
+    assert!(g.thaw_blob.is_none(), EWrongState);
     g.thaw_blob = option::some(blob_id);
     event::emit(ThawPublished { game_id: g.id.to_inner(), blob_id });
 }

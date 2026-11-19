@@ -22,13 +22,39 @@ interface Summary {
 
 const empty = (): Summary => ({ players: new Set(), frozen: 0, toWell: 0n, finders: [], blizzards: 0, steps: 0 });
 
-/** One pass over every Whiteout event, grouped by game. */
-async function scanEvents(): Promise<Map<string, Summary>> {
+const MAX_PAGES = 120;
+
+/**
+ * Whiteout events grouped by game, newest first, up to MAX_PAGES pages: the logbook
+ * shows the most recent hunts and says when older ones were left out. A game whose
+ * LobbyCreated was not reached is dropped, as its summary would be partial.
+ */
+async function scanEvents(): Promise<{ games: Map<string, Summary>; more: boolean }> {
   const out = new Map<string, Summary>();
-  let after: string | null = null;
-  for (let page = 0; page < 60; page++) {
-    const res: { events: Array<{ eventType: string; bcs: Uint8Array }>; hasNextPage: boolean; endCursor?: string | null } =
-      await suiClient.core.listEvents({ filter: { emitModule: `${config.packageId}::game` }, limit: 50, ...(after ? { after } : {}) });
+  const created = new Set<string>();
+  let before: string | null = null;
+  let more = false;
+  for (let page = 0; ; page++) {
+    if (page >= MAX_PAGES) {
+      more = true;
+      break;
+    }
+    let res: { events: Array<{ eventType: string; bcs: Uint8Array }>; hasNextPage: boolean; endCursor?: string | null };
+    try {
+      res = await suiClient.core.listEvents({
+        filter: { emitModule: `${config.packageId}::game` },
+        limit: 50,
+        order: 'descending',
+        ...(before ? { before } : {}),
+      });
+    } catch (e) {
+      // Older checkpoints are pruned on public nodes: show what is still readable.
+      if (/earliest available|pruned|below/i.test((e as Error).message)) {
+        more = true;
+        break;
+      }
+      throw e;
+    }
     for (const raw of res.events) {
       const ev = parseEvent(config.packageId, raw) as GameEvent | null;
       if (!ev) continue;
@@ -36,6 +62,9 @@ async function scanEvents(): Promise<Map<string, Summary>> {
       const s = out.get(id) ?? empty();
       out.set(id, s);
       switch (ev.name) {
+        case 'LobbyCreated':
+          created.add(id);
+          break;
         case 'ExplorerJoined':
           s.players.add(ev.data.owner);
           break;
@@ -59,10 +88,11 @@ async function scanEvents(): Promise<Map<string, Summary>> {
           break;
       }
     }
-    after = res.endCursor ?? after;
+    before = res.endCursor ?? before;
     if (!res.hasNextPage) break;
   }
-  return out;
+  for (const id of [...out.keys()]) if (!created.has(id)) out.delete(id);
+  return { games: out, more };
 }
 
 export function History() {
@@ -70,13 +100,18 @@ export function History() {
   const [rows, setRows] = useState<Array<{ g: GameState; s: Summary }> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mine, setMine] = useState(false);
+  const [more, setMore] = useState(false);
 
   useEffect(() => {
-    if (!configured) return;
+    if (!configured) {
+      setError('This network has no Whiteout deployment configured.');
+      return;
+    }
     let stop = false;
     void (async () => {
       try {
-        const summaries = await scanEvents();
+        const { games: summaries, more } = await scanEvents();
+        if (!stop) setMore(more);
         const games = await Promise.all([...summaries.keys()].map((id) => getGame(suiClient, id).catch(() => null)));
         const list = games
           .filter((g): g is GameState => !!g)
@@ -149,6 +184,7 @@ export function History() {
 
       {error && <div className="banner error">Could not read the logbook: {error.slice(0, 120)}</div>}
       {!rows && !error && <div className="skeleton-list" aria-busy="true"><div /><div /></div>}
+      {more && rows && <p className="small">Showing the most recent hunts. Older ones are still on-chain but not listed here.</p>}
       {rows && !shown.length && (
         <div className="empty-state">
           <Mark size={40} animate={false} />

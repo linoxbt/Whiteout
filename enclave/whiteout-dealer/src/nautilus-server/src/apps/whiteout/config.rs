@@ -10,8 +10,12 @@ use sui_sdk_types::Address;
 
 #[cfg(all(feature = "testnet", not(feature = "mainnet")))]
 const RAW: &str = include_str!("../../../config/testnet.json");
+#[cfg(all(feature = "testnet", not(feature = "mainnet")))]
+pub const NETWORK: &str = "testnet";
 #[cfg(feature = "mainnet")]
 const RAW: &str = include_str!("../../../config/mainnet.json");
+#[cfg(feature = "mainnet")]
+pub const NETWORK: &str = "mainnet";
 #[cfg(not(any(feature = "testnet", feature = "mainnet")))]
 compile_error!("enable exactly one of the `testnet` or `mainnet` features");
 
@@ -44,17 +48,39 @@ pub struct DealerConfig {
 }
 
 impl DealerConfig {
+    /// The config compiled into this binary. Fails (and the server refuses to
+    /// start) unless it is complete and names the network the binary was built for.
     pub fn pinned() -> Result<Self> {
-        Self::parse(RAW)
+        let c = Self::parse(RAW)?;
+        if c.network != NETWORK {
+            bail!("pinned config is for {:?} but this binary was built for {NETWORK:?}", c.network);
+        }
+        Ok(c)
     }
 
     pub fn parse(raw: &str) -> Result<Self> {
         let c: RawConfig = serde_json::from_str(raw).context("dealer config")?;
-        let package_id = parse_address(&c.package_id)?;
+        if c.network.is_empty() {
+            bail!("network is empty");
+        }
+        let package_id = parse_address(&c.package_id).context("package_id")?;
+        if package_id == Address::ZERO {
+            bail!("package_id is 0x0: pin the published Whiteout package before building");
+        }
         let mut servers = vec![];
         let mut public_keys = vec![];
+        let mut seen = std::collections::HashSet::new();
         for ks in &c.key_servers {
-            let id = parse_address(&ks.object_id)?;
+            let id = parse_address(&ks.object_id).context("key server object_id")?;
+            if id == Address::ZERO {
+                bail!("key server object_id is 0x0");
+            }
+            if !seen.insert(id) {
+                bail!("key server {id} is listed twice; use its weight instead");
+            }
+            if ks.weight == 0 {
+                bail!("key server {id} has weight 0");
+            }
             let bytes = hex::decode(ks.public_key.trim_start_matches("0x"))?;
             let arr: [u8; 96] = bytes.try_into().map_err(|_| anyhow!("public key must be 96 bytes"))?;
             let pk = G2Element::from_byte_array(&arr).map_err(|_| anyhow!("invalid G2 public key"))?;
@@ -66,6 +92,10 @@ impl DealerConfig {
         if servers.is_empty() {
             bail!("no key servers configured");
         }
+        // Seal counts shares in a u8 (seal_encrypt casts the server count to u8).
+        if servers.len() > u8::MAX as usize {
+            bail!("{} key-server shares; at most 255", servers.len());
+        }
         if c.threshold == 0 || c.threshold as usize > servers.len() {
             bail!("threshold {} is out of range", c.threshold);
         }
@@ -74,7 +104,10 @@ impl DealerConfig {
 }
 
 pub fn parse_address(s: &str) -> Result<Address> {
-    let hex = s.trim_start_matches("0x");
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    if hex.is_empty() || hex.len() > 64 {
+        bail!("address {s:?} must be 1 to 64 hex digits");
+    }
     let padded = format!("{hex:0>64}");
     let bytes = hex::decode(padded)?;
     let arr: [u8; 32] = bytes.try_into().map_err(|_| anyhow!("address must be 32 bytes"))?;

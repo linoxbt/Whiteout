@@ -350,7 +350,10 @@ describe('transactions', () => {
       ),
     ).toEqual(['game::create_ranked_lobby']);
     const add = Array.from({ length: 1500 }, (_, i) => '0x' + (i + 1).toString(16));
+    // 400 per call keeps each argument under Sui's 16 KiB pure-argument limit.
     expect(calls(tx.editAllowlist(ctx, { listId: '0x7', capId: '0x8', add, remove: ['0x1'] }))).toEqual([
+      'allowlist::add',
+      'allowlist::add',
       'allowlist::add',
       'allowlist::add',
       'allowlist::remove',
@@ -383,7 +386,7 @@ describe('errors', () => {
   it('maps abort codes', () => {
     expect(parseAbort({ MoveAbort: { abortCode: '10' } })?.name).toBe('ECooldown');
     expect(parseAbort({ MoveAbort: { abortCode: '23', location: { package: '0x1' } } }, '0x2')).toBeNull();
-    expect(Object.keys(ABORTS)).toHaveLength(30);
+    expect(Object.keys(ABORTS)).toHaveLength(35);
     expect(parseAbort({ MoveAbort: { abortCode: '27' } })?.name).toBe('EDrift');
   });
 });

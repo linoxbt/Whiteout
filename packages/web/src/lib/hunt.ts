@@ -42,7 +42,6 @@ import {
   type Trail,
 } from '@whiteout/core';
 import { config, suiClient } from '../config';
-import { dAppKit } from '../dappkit';
 import { run, TxError } from './exec';
 import { kvGet, kvSet } from './store';
 import { createSession, hadSession, loadSession } from './session';
@@ -66,7 +65,8 @@ export interface HuntView {
   busy: boolean;
   chainNow: number;
   notice: Notice | null;
-  integrity: 'unknown' | 'checking' | 'ok' | 'failed';
+  integrity: 'unknown' | 'checking' | 'ok' | 'failed' | 'error';
+  integrityError?: string;
   integrityProgress: number;
   /** A verified resolve waiting to ride along with the next step (spec review: batching). */
   queuedResolve: Tile | null;
@@ -75,6 +75,8 @@ export interface HuntView {
   /** Phase 2: the connected address against the hunt's allowlist. */
   gate: 'open' | 'checking' | 'member' | 'not_member';
   allowlistName: string | null;
+  /** The player declined the reading session; tiles stay hidden until they allow it. */
+  readingDeclined: boolean;
   /** Preview builds only: a map to show as already thawed. */
   thawMap?: Uint8Array | null;
 }
@@ -99,11 +101,13 @@ export class Hunt {
     sessionPrompt: false,
     gate: 'open',
     allowlistName: null,
+    readingDeclined: false,
   };
   #listeners = new Set<() => void>();
   #cursor: string | null = null;
   #clockOffset = 0;
-  #timer: ReturnType<typeof setInterval> | null = null;
+  #timer: ReturnType<typeof setTimeout> | null = null;
+  #running = false;
   #holdTimer: ReturnType<typeof setTimeout> | null = null;
   #cts = new Map<string, Uint8Array>();
   address: string | null = null;
@@ -126,26 +130,73 @@ export class Hunt {
   }
 
   start() {
+    if (this.#running) return;
+    this.#running = true;
     void this.refresh();
-    this.#timer ??= setInterval(() => void this.refresh(), 4000);
+    this.#poll();
+    // A reveal queued before the player left the page still has to reach the chain.
+    if (this.view.queuedResolve) this.#armHold(this.view.queuedResolve);
   }
   stop() {
-    if (this.#timer) clearInterval(this.#timer);
+    this.#running = false;
+    if (this.#timer) clearTimeout(this.#timer);
     if (this.#holdTimer) clearTimeout(this.#holdTimer);
     this.#timer = null;
+    this.#holdTimer = null;
+  }
+
+  /** Polls every 4 s while the hunt is live and visible; slower when hidden or over. */
+  #poll() {
+    if (!this.#running) return;
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    const pending = !!this.view.me?.pending;
+    const delay = hidden && !pending ? 20_000 : this.view.game && this.ended && !pending ? 15_000 : 4000;
+    this.#timer = setTimeout(() => {
+      void this.refresh().finally(() => this.#poll());
+    }, delay);
   }
 
   setPlayer(address: string | null, wallet: UiWallet | null) {
     if (address === this.address) return;
     this.address = address;
     this.wallet = wallet;
-    this.#set({ me: null, tiles: new Map() });
+    if (this.#holdTimer) clearTimeout(this.#holdTimer);
+    this.#holdTimer = null;
+    this.#gateFor = null;
+    this.#set({ me: null, tiles: new Map(), queuedResolve: null, readingDeclined: false });
     void this.refresh();
   }
 
   // --- Reads ------------------------------------------------------------------
 
-  async refresh() {
+  #refreshing: Promise<void> | null = null;
+  #refreshAgain = false;
+
+  /**
+   * Single flight: a refresh asked for while one runs makes that one run again when
+   * it ends, and both callers wait for the second pass. Reads never overlap, so
+   * events are never applied twice and a slow, older read never lands last.
+   */
+  refresh(): Promise<void> {
+    if (this.#refreshing) {
+      this.#refreshAgain = true;
+      return this.#refreshing;
+    }
+    this.#refreshing = (async () => {
+      try {
+        do {
+          this.#refreshAgain = false;
+          await this.#refreshOnce();
+        } while (this.#refreshAgain);
+      } finally {
+        this.#refreshing = null;
+      }
+    })();
+    return this.#refreshing;
+  }
+
+  async #refreshOnce() {
+    const address = this.address;
     try {
       const [game, page, clock] = await Promise.all([
         getGame(suiClient, this.gameId),
@@ -156,10 +207,12 @@ export class Hunt {
       this.#clockOffset = clock - Date.now();
       const trail = applyEvents(this.view.trail, page.events);
       let me: ExplorerState | null = null;
-      if (this.address) {
-        const mine = [...trail.explorers.entries()].find(([, e]) => sameId(e.owner, this.address!));
+      if (address) {
+        const mine = [...trail.explorers.entries()].find(([, e]) => sameId(e.owner, address));
         if (mine) me = await getExplorer(suiClient, mine[0]);
       }
+      // The player switched accounts mid-read: the next pass reads for the new one.
+      if (address !== this.address) return;
       const tiles = this.view.tiles.size || !me ? this.view.tiles : await this.#loadSavedTiles();
       const before = this.view.game;
       this.#set({ loading: false, error: null, game, trail: { ...trail }, me, tiles, chainNow: this.now() });
@@ -208,7 +261,7 @@ export class Hunt {
     }
   }
 
-  #blizzardTried = 0;
+  #warned = new Set<string>();
 
   /** Changes since the last read: blizzards, rival finds, deadlines. */
   #watch(before: GameState | null, game: GameState, me: ExplorerState | null) {
@@ -226,26 +279,31 @@ export class Hunt {
     }
     if (me?.pending && me.status === ExplorerStatus.ACTIVE) {
       const left = me.pending.deadlineMs - now;
-      if (left < 60_000 && left > 0) notify(`deadline:${me.id}:${me.pending.deadlineMs}`, 'Reveal your tile', 'Under a minute left to reveal your tile, or your yeti freezes.');
+      if (left < 60_000 && left > 0) {
+        const key = `deadline:${me.id}:${me.pending.deadlineMs}`;
+        const shown = notify(key, 'Reveal your tile', 'Under a minute left to reveal your tile, or your yeti freezes.');
+        if (!shown && !this.#warned.has(key) && document.visibilityState === 'visible') {
+          this.#warned.add(key);
+          this.#set({ notice: { kind: 'warn', text: 'Under a minute left to reveal this tile, or your yeti freezes.' } });
+        }
+      }
     }
     if (me && isLive(game, now) && game.endsAt - now < 10 * 60_000) {
       notify(`ending:${game.id}`, 'The hunt is ending', 'Less than 10 minutes until the mountain thaws.');
     }
-    // Anyone may start a due blizzard. Active players do it for the hunt after a short
-    // random wait, so several clients rarely race; a lost race is ignored.
-    if (me?.status === ExplorerStatus.ACTIVE && blizzardDue(game, now) && this.#blizzardTried !== game.nextBlizzardAt) {
-      this.#blizzardTried = game.nextBlizzardAt;
-      setTimeout(async () => {
-        const g = this.view.game;
-        if (!g || !blizzardDue(g, this.now()) || this.view.busy) return;
-        try {
-          await run(tx.blizzard(this.ctx, { gameId: this.gameId }), this.wallet, this.address!);
-          await this.refresh();
-        } catch {
-          /* someone else started it, or the wallet declined */
-        }
-      }, 2000 + Math.random() * 18_000);
-    }
+  }
+
+  /**
+   * Anyone may start a due blizzard. Players are never asked to sign one behind their
+   * back: the host console, the CLI watcher, or a player's own tap starts it.
+   */
+  async startBlizzard() {
+    const g = this.view.game;
+    if (!g || !blizzardDue(g, this.now())) return;
+    await this.#act(async () => {
+      await run(tx.blizzard(this.ctx, { gameId: this.gameId }), this.wallet, this.address!);
+      await this.refresh();
+    });
   }
 
   /** Whether stepping `dir` from (x, y) would walk into a drift right now. */
@@ -271,7 +329,7 @@ export class Hunt {
       this.#set({ integrity: ok ? 'ok' : 'failed' });
       return ok;
     } catch (e) {
-      this.#set({ integrity: 'unknown', error: `Could not download the hunt: ${(e as Error).message}` });
+      this.#set({ integrity: 'error', integrityError: (e as Error).message });
       return false;
     }
   }
@@ -335,9 +393,15 @@ export class Hunt {
   }
 
   declineSession() {
-    this.#set({ sessionPrompt: false });
+    this.#set({ sessionPrompt: false, readingDeclined: true });
     this.#consent?.reject(new Error('Reading session declined'));
     this.#consent = null;
+  }
+
+  /** The player changed their mind: ask for the reading session again. */
+  allowReading() {
+    this.#set({ readingDeclined: false });
+    void this.#autoReveal();
   }
 
   async step(dir: DirectionValue) {
@@ -356,7 +420,15 @@ export class Hunt {
         throw new TxError('Reveal the tile you are on first.', null);
       }
       tx.step(this.ctx, { gameId: this.gameId, explorerId: me.id, dir }, t);
-      await run(t, this.wallet, this.address!);
+      // The queued resolve rides with this step; the hold timer must not send it too.
+      if (this.#holdTimer) clearTimeout(this.#holdTimer);
+      this.#holdTimer = null;
+      try {
+        await run(t, this.wallet, this.address!);
+      } catch (e) {
+        if (this.view.queuedResolve) this.#armHold(this.view.queuedResolve);
+        throw e;
+      }
       this.#set({ queuedResolve: null });
       await this.refresh();
     });
@@ -366,7 +438,14 @@ export class Hunt {
   async resolveNow() {
     const me = this.view.me;
     const tile = this.view.queuedResolve ?? (me?.pending ? this.view.tiles.get(`${me.pending.x},${me.pending.y}`) : undefined);
-    if (!me?.pending || !tile) return;
+    if (!me?.pending || !tile || tile.x !== me.pending.x || tile.y !== me.pending.y) return;
+    if (this.view.busy) {
+      // Another action is on its way; try again when it lands (it may carry this resolve).
+      setTimeout(() => void this.resolveNow(), 750);
+      return;
+    }
+    if (this.#holdTimer) clearTimeout(this.#holdTimer);
+    this.#holdTimer = null;
     await this.#act(async () => {
       const t = new Transaction();
       this.#resolveInto(t, tile, me);
@@ -418,7 +497,7 @@ export class Hunt {
   async #autoReveal() {
     const me = this.view.me;
     const game = this.view.game;
-    if (!me || !game || this.#revealing || me.status !== ExplorerStatus.ACTIVE) return;
+    if (!me || !game || this.#revealing || me.status !== ExplorerStatus.ACTIVE || this.view.readingDeclined) return;
     const want = visibleTiles(me.x, me.y, me.vision).filter(([x, y]) => !this.view.tiles.has(`${x},${y}`));
     if (!want.length) {
       this.#maybeQueueResolve();
@@ -436,8 +515,14 @@ export class Hunt {
       });
       const tiles = new Map(this.view.tiles);
       for (const r of res) {
-        if (!r.verified) {
+        if (!r.kindOk) {
           this.#set({ notice: { kind: 'error', text: `Tile (${r.tile.x}, ${r.tile.y}) failed verification and is hidden.` } });
+          continue;
+        }
+        if (!r.clueOk) {
+          // The kind is signed, so the tile can still be resolved; its clue is not shown.
+          this.#set({ notice: { kind: 'warn', text: `The clue on tile (${r.tile.x}, ${r.tile.y}) failed verification and is hidden.` } });
+          tiles.set(`${r.tile.x},${r.tile.y}`, { ...r.tile, clueOk: false });
           continue;
         }
         tiles.set(`${r.tile.x},${r.tile.y}`, r.tile);
@@ -447,8 +532,14 @@ export class Hunt {
       void kvSet(`tiles:${this.gameId}:${this.address}`, [...tiles.values()]);
       this.#maybeQueueResolve();
     } catch (e) {
-      if ((e as Error).message === 'Reading session declined') {
-        this.#set({ revealing: null, notice: { kind: 'warn', text: 'Your tiles stay in the fog until you allow this device to read them.' } });
+      const msg = (e as Error).message ?? '';
+      if (msg === 'Reading session declined' || /reject|denied|declin|cancel/i.test(msg)) {
+        // Do not nag: wait until the player taps "Allow reading" again.
+        this.#set({
+          revealing: null,
+          readingDeclined: true,
+          notice: { kind: 'warn', text: 'Your tiles stay in the fog until you allow this device to read them.' },
+        });
         return;
       }
       void beacon(this.gameId, 'key_fetch_error');
@@ -501,11 +592,32 @@ export class Hunt {
     }
     this.#set({ queuedResolve: tile });
     this.#afterResolve(tile, true);
-    const hold = Math.min(60_000, (this.view.game?.resolveWindowMs ?? 300_000) / 2);
+    this.#armHold(tile);
+  }
+
+  /**
+   * Sends the queued resolve on its own if no step carries it first. The wait is
+   * counted from the on-chain deadline, never from when the reveal finished, and
+   * keeps a safety margin for the transaction itself.
+   */
+  #armHold(tile: Tile) {
     if (this.#holdTimer) clearTimeout(this.#holdTimer);
+    const me = this.view.me;
+    if (!me?.pending) return;
+    const margin = 20_000;
+    const byDeadline = me.pending.deadlineMs - this.now() - margin;
+    const hold = Math.max(0, Math.min(60_000, (this.view.game?.resolveWindowMs ?? 300_000) / 2, byDeadline));
     this.#holdTimer = setTimeout(() => {
+      this.#holdTimer = null;
       if (this.view.queuedResolve === tile) void this.resolveNow();
     }, hold);
+  }
+
+  /** Milliseconds until the queued resolve is sent on its own (for the UI). */
+  holdLeft(): number | null {
+    const me = this.view.me;
+    if (!this.view.queuedResolve || !me?.pending) return null;
+    return Math.max(0, me.pending.deadlineMs - 20_000 - this.now());
   }
 
   #resolveInto(t: Transaction, tile: Tile, me: ExplorerState) {
@@ -535,7 +647,9 @@ export class Hunt {
     } else if (tile.kind === TileKind.CREVASSE) this.#set({ notice: { kind: 'item', text: 'A crevasse! Your rope holds.' } });
   }
 
+  /** One chain action at a time: a second one while busy is ignored (callers retry). */
   async #act(fn: () => Promise<void>) {
+    if (this.view.busy) return;
     this.#set({ busy: true });
     try {
       await fn();
@@ -545,7 +659,7 @@ export class Hunt {
         this.#set({ notice: { kind: 'auth', text: 'Your Google session expired. Log in again: your yeti and its countdown are safe on-chain.' } });
       } else {
         const text =
-          err.status === 429 ? 'You have used this hunt\'s free moves. Connect a Sui wallet to keep playing.' :
+          err.status === 429 ? 'You have used today\'s free moves (600 a day). Connect a Sui wallet to keep playing.' :
           err.abort?.action === 'thaw' ? 'The hunt is over.' :
           err.message;
         this.#set({ notice: { kind: 'error', text } });
@@ -586,4 +700,3 @@ export function huntFor(gameId: string): Hunt {
   return h;
 }
 
-export { GameStatus, ExplorerStatus, tileIndex };

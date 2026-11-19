@@ -20,6 +20,7 @@ import { amount, dealerBadge, kindName, shortId, statusLabel, timeLeft, warmthWo
 import { useHunt, useTick } from '../lib/useHunt';
 import { makePreview, PREVIEW_ADDRESS } from '../lib/preview';
 import { Thaw } from './Thaw';
+import { config, googleLogin } from '../config';
 
 /** Design preview (#/hunt/preview-<state>): compiled in only when VITE_PREVIEW=1. */
 const PREVIEW = import.meta.env.VITE_PREVIEW === '1';
@@ -68,7 +69,7 @@ function HuntScreen({ hunt, v, gameId, mode, account }: { hunt: HuntModel; v: Hu
         <Clouds seed={seedOf(gameId)} count={5} fog={false} top={[0, 40]} />
         <div className="hunt-title">
           <div>
-            <span className="tele ice">{g.dealerKind === 1 ? 'Sealed by enclave' : 'Host-dealt'} / Grid 24 × 24</span>
+            <span className="tele ice">{g.status === GameStatus.LOBBY ? 'Not dealt yet' : g.dealerKind === 1 ? 'Sealed by enclave' : 'Host-dealt'} / Grid 24 × 24</span>
             <h1>Expedition <span className="thin">{shortId(gameId, 4)}</span></h1>
           </div>
           {isLive && (
@@ -156,7 +157,9 @@ function Login({ v }: { v: HuntView }) {
         <span className="eyebrow">Join the hunt</span>
         <h2 style={{ marginTop: 10 }}>Step onto the mountain</h2>
         <p className="small" style={{ lineHeight: 1.6 }}>
-          Play with Google, no crypto needed, gas is on us. Or connect any Sui wallet.
+          {googleLogin
+            ? 'Play with Google, no crypto needed, gas is on us. Or connect any Sui wallet.'
+            : `Connect any Sui wallet set to ${config.network}. Each step is a small transaction from your wallet${config.network === 'testnet' ? ' (testnet SUI is free from the Sui faucet)' : ''}.`}
         </p>
         <div className="actions">
           <ConnectButton />
@@ -190,6 +193,7 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
   const g = v.game!;
   const [column, setColumn] = useState(12);
   useEffect(() => {
+    // Runs once; a failed download shows an error with a Retry button instead of looping.
     if (v.integrity === 'unknown') void hunt.checkIntegrity();
   }, [hunt, v.integrity]);
   if (!hunt.live) return <p className="empty">Joining is closed.</p>;
@@ -246,6 +250,12 @@ function Lobby({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         )}
         {v.integrity === 'ok' && <p className="small" style={{ color: 'var(--good)', margin: '0 0 10px' }}>✓ All 576 tiles match what the dealer signed</p>}
         {v.integrity === 'failed' && <div className="banner error">This hunt failed its integrity check. Do not join.</div>}
+        {v.integrity === 'error' && (
+          <div className="banner error" role="alert">
+            <span>Could not download the hunt's tiles to check them: {v.integrityError?.slice(0, 120)}</span>
+            <button onClick={() => void hunt.checkIntegrity()}>Retry</button>
+          </div>
+        )}
         <GateNotice gate={v.gate} name={v.allowlistName} />
         <button className="primary big" disabled={v.busy || v.integrity !== 'ok' || v.gate === 'not_member' || v.gate === 'checking'} onClick={() => void hunt.join(column)}>
           {v.busy ? 'Joining…' : 'Set out →'}
@@ -288,7 +298,7 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
   const frozen = me.status === ExplorerStatus.FROZEN;
   const finder = me.status === ExplorerStatus.FINDER;
   const deadlineLeft = me.pending ? me.pending.deadlineMs - now : 0;
-  const description = here
+  const description = here && here.clueOk !== false
     ? `You are at column ${me.x + 1}, row ${me.y + 1}: ${kindName(here.kind)}, ${warmthWord(here.warmth)} (${here.warmth}), ${here.hazards} crevasses nearby.`
     : `You are at column ${me.x + 1}, row ${me.y + 1}.`;
 
@@ -312,7 +322,13 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
       </div>
 
       <aside className="side">
-        <Weather g={g} now={now} />
+        <Weather g={g} now={now} onStart={() => void hunt.startBlizzard()} busy={v.busy} />
+        {v.readingDeclined && !me.pending && (
+          <div className="banner warn" role="status">
+            <span>Your tiles stay in the fog until this device may read them.</span>
+            <button onClick={() => hunt.allowReading()}>Allow reading</button>
+          </div>
+        )}
         <div className="card">
           <div className="row">
             <span className="eyebrow">You are here</span>
@@ -325,7 +341,8 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
               <span className="small mono">
                 col {String(me.x + 1).padStart(2, '0')} · row {String(me.y + 1).padStart(2, '0')}
               </span>
-              {here && (
+              {here && here.clueOk === false && <span className="small">Its clue failed verification and is hidden.</span>}
+              {here && here.clueOk !== false && (
                 <>
                   <div className="meter" aria-label={`Warmth ${here.warmth} of 5`}>
                     {[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= here.warmth ? 'on' : ''} />)}
@@ -357,9 +374,15 @@ function Play({ hunt, v }: { hunt: HuntModel; v: HuntView }) {
         {me.pending && (
           <div className={`banner ${deadlineLeft < 60_000 ? 'error' : 'info'}`} role="status">
             <span>
-              {pendingTile ? `Revealed: ${kindName(pendingTile.kind)}` : 'Thawing…'}
+              {pendingTile ? `Revealed: ${kindName(pendingTile.kind)}` : v.readingDeclined ? 'In the fog' : 'Thawing…'}
               <span className="mono" style={{ marginLeft: 8, opacity: 0.8 }}>{timeLeft(deadlineLeft)}</span>
+              {v.queuedResolve && (
+                <span className="small" style={{ display: 'block' }}>
+                  Saved on-chain with your next step, or on its own before the deadline. Keep this page open until then.
+                </span>
+              )}
             </span>
+            {v.readingDeclined && <button onClick={() => hunt.allowReading()}>Allow reading</button>}
             {deadlineLeft < 60_000 && <button onClick={() => void hunt.resolveNow()}>Retry</button>}
           </div>
         )}

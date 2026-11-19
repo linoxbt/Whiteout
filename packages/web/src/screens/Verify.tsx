@@ -27,13 +27,20 @@ interface Report {
 export function Verify({ gameId }: { gameId: string }) {
   const [r, setR] = useState<Report | null>(null);
   const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let stop = false;
     void (async () => {
-      const game = await getGame(suiClient, gameId);
+      let game: GameState;
+      try {
+        game = await getGame(suiClient, gameId);
+      } catch (e) {
+        if (!stop) setError((e as Error).message);
+        return;
+      }
       const base: Report = { game, ctHash: 'checking', immutable: 'unknown' };
-      if (game.enclaveId && config.enclaveConfigId) {
+      if (game.enclaveId && config.enclaveConfigId) try {
         const [{ object: enc }, { object: cfg }] = await Promise.all([
           suiClient.core.getObject({ objectId: game.enclaveId, include: { content: true } }),
           suiClient.core.getObject({ objectId: config.enclaveConfigId, include: { content: true } }),
@@ -42,11 +49,20 @@ export function Verify({ gameId }: { gameId: string }) {
         const c = EnclaveConfigBcs.parse(cfg.content);
         base.pcrs = c.pcrs.map((p) => toHex(Uint8Array.from(p)));
         base.enclavePk = toHex(Uint8Array.from(e.pk));
-        base.enclaveCurrent = e.config_version === c.version;
+        // The enclave that dealt must be the one whose key signed the deal.
+        base.enclaveCurrent = e.config_version === c.version && toHex(Uint8Array.from(e.pk)) === toHex(game.dealerPk);
+      } catch {
+        base.enclaveCurrent = false;
       }
       if (config.upgradeCapIds.length) {
-        const { objects } = await suiClient.core.getObjects({ objectIds: config.upgradeCapIds });
-        base.immutable = objects.every((o) => o instanceof Error) ? 'yes' : 'no';
+        try {
+          const { objects } = await suiClient.core.getObjects({ objectIds: config.upgradeCapIds });
+          // Only a cap that no longer exists proves immutability; any other error is "unknown".
+          const gone = (o: unknown) => o instanceof Error && /not.?found|deleted|does not exist|NotExists/i.test(o.message);
+          base.immutable = objects.every(gone) ? 'yes' : objects.some((o) => !(o instanceof Error)) ? 'no' : 'unknown';
+        } catch {
+          base.immutable = 'unknown';
+        }
       }
       if (!stop) setR(base);
       try {
@@ -68,6 +84,14 @@ export function Verify({ gameId }: { gameId: string }) {
     };
   }, [gameId]);
 
+  if (error) {
+    return (
+      <section className="card verify">
+        <p><a href={`#/hunt/${gameId}`}>← Back to the hunt</a></p>
+        <div className="banner error" role="alert">Could not read this hunt: {error.slice(0, 160)}</div>
+      </section>
+    );
+  }
   if (!r) return <div className="skeleton-grid" aria-busy="true" />;
   const g = r.game;
   return (
@@ -88,7 +112,7 @@ export function Verify({ gameId }: { gameId: string }) {
             <dd>
               {r.pcrs.map((p, i) => (<div key={i}><code>PCR{i} {p.slice(0, 24)}…</code></div>))}
               {config.dealerSourceUrl && <a href={config.dealerSourceUrl} target="_blank" rel="noreferrer">Rebuild from source</a>}
-              {r.enclaveCurrent === false && <div className="warn">This enclave registered against an older PCR set.</div>}
+              {r.enclaveCurrent === false && <div className="warn">This enclave does not match the current PCRs or the key that signed the deal.</div>}
             </dd>
           </>
         )}
@@ -113,7 +137,7 @@ export function Verify({ gameId }: { gameId: string }) {
         <dt>Package</dt>
         <dd>
           <code>{shortId(config.packageId, 8)}</code> ·{' '}
-          {r.immutable === 'yes' ? 'immutable' : r.immutable === 'no' ? <strong className="warn">upgradeable</strong> : 'immutability not recorded'}
+          {r.immutable === 'yes' ? 'immutable' : r.immutable === 'no' ? <strong className="warn">upgradeable</strong> : 'immutability unknown (could not read the UpgradeCap)'}
         </dd>
         {g.thawBlob && (<><dt>Thaw file</dt><dd><code>{g.thawBlob}</code></dd></>)}
       </dl>

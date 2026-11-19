@@ -183,7 +183,8 @@ export function Mountain(p: MountainProps) {
           c.fill();
           c.restore();
           glyph(c, kind, tx, ty, ts, lit);
-          if (mine && kind !== TileKind.CREVASSE) {
+          // A clue whose signature failed is never drawn.
+          if (mine && kind !== TileKind.CREVASSE && mine.clueOk !== false) {
             if (kind === TileKind.SNOW) {
               c.font = `600 ${fontPx}px 'Datatype Variable', monospace`;
               c.fillStyle = WARM_INK[mine.warmth]!;

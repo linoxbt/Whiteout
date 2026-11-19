@@ -5,8 +5,8 @@
 ///
 /// Every test game reuses the one fixture game ID (the dealer signatures are bound
 /// to it), so each sequence runs as its own test. The spec asks for 10 000
-/// sequences before Mainnet; this file runs 24 so `sui move test` stays quick.
-/// Add more `ac21_seq_*` tests (any seed) for the release gate.
+/// sequences: 24 single-seed tests here, plus 10 000 more in conservation_bulk_tests
+/// (1 000 tests of 10 seeds each; the test VM caps events per test).
 #[test_only, allow(deprecated_usage)]
 module whiteout::conservation_tests;
 
@@ -38,7 +38,9 @@ public struct Ledger has drop {
     withdrawn: u64,
 }
 
-fun player(i: u64): address { sui::address::from_u256((0x100 + i) as u256) }
+/// Players differ per seed: sequences that share the fixture game ID in one test
+/// never meet each other's leftover table entries.
+fun player(seed: u64, i: u64): address { sui::address::from_u256((0x100 + (seed as u256) * 8 + (i as u256))) }
 
 fun live(g: &Game<SUI>, env: &Env, margin: u64): bool {
     g.status() == game::status_open() && env.now() + margin < g.ends_at()
@@ -91,7 +93,7 @@ fun run_sequence(seed: u64) {
     let mut xs = vector[];
     PLAYERS.do!(|i| {
         let column = if (i == 0) 5 else (below(&mut r, 24) as u8);
-        xs.push_back(env.join(&mut g, player(i), column));
+        xs.push_back(env.join(&mut g, player(seed, i), column));
         l.paid_in = l.paid_in + stake;
     });
     check(&g, &xs, &l);
@@ -186,8 +188,22 @@ fun run_sequence(seed: u64) {
     assert!(finders <= 1);
     assert!((finders == 1) == (g.status() == game::status_ended_found()));
 
+    // Return an unwon prize, so the next sequence can reuse the fixture game ID.
+    if (g.has_prize()) {
+        let p: Prize = game::reclaim_prize(&mut g, &cap);
+        destroy(p);
+    };
     destroy(xs);
     env.cleanup(g, cap);
+}
+
+/// Runs `count` sequences from consecutive seeds in one test.
+public fun run_many(first_seed: u64, count: u64) {
+    let mut i = 0;
+    while (i < count) {
+        run_sequence(first_seed + i * 7919);
+        i = i + 1;
+    };
 }
 
 #[test]
@@ -269,8 +285,8 @@ fun lane_walker_can_claim() {
     let (mut g, cap, mut env) = t::open_game(25, 4);
     let mut l = Ledger { paid_in: 0, to_well: 0, to_finder: 0, withdrawn: 0 };
     let mut xs = vector[];
-    xs.push_back(env.join(&mut g, player(0), 5));
-    xs.push_back(env.join(&mut g, player(1), 6));
+    xs.push_back(env.join(&mut g, player(0, 0), 5));
+    xs.push_back(env.join(&mut g, player(0, 1), 6));
     l.paid_in = 50;
     env.step(&g, &mut xs[1], t::n()); // (6, 1): crevasse
     resolve_any(&mut env, &mut g, &mut xs, 1, &mut l);
@@ -282,3 +298,4 @@ fun lane_walker_can_claim() {
     destroy(xs);
     env.cleanup(g, cap);
 }
+

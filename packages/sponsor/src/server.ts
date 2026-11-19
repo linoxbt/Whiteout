@@ -1,26 +1,21 @@
-/** Node entry point. Environment: NETWORK, PACKAGE_ID, ENOKI_PRIVATE_KEY, optional
- * REDIS_URL + REDIS_TOKEN (Upstash REST), ALLOWED_ORIGINS, PORT. */
+/** Node entry point. Environment: see src/env.ts (shared with api/index.ts). */
 import { serve } from '@hono/node-server';
-import { enokiHttp, makeApp } from './app.js';
-import { MemoryStore, UpstashStore } from './quota.js';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import { makeApp } from './app.js';
+import { EnvError, loadEnv } from './env.js';
 
-const env = (k: string, d?: string) => {
-  const v = process.env[k] ?? d;
-  if (v === undefined) throw new Error(`${k} is required`);
-  return v;
-};
+let loaded;
+try {
+  loaded = loadEnv(process.env, 'node');
+} catch (e) {
+  console.error(e instanceof EnvError ? e.message : e);
+  process.exit(1);
+}
+const { config, deps, port, trustProxy, memoryStore } = loaded;
+// Without a trusted proxy in front, rate limits key on the socket address, not on headers a client can forge.
+if (!trustProxy) config.clientIp = (c) => getConnInfo(c).remote.address ?? 'unknown';
 
-const app = makeApp(
-  {
-    network: env('NETWORK', 'testnet'),
-    packageId: env('PACKAGE_ID'),
-    maxGasBudgetMist: 50_000_000n, // 0.05 SUI (spec section 10); enforced in the Enoki portal
-    allowedOrigins: process.env.ALLOWED_ORIGINS?.split(',').filter(Boolean) ?? [],
-  },
-  enokiHttp(env('ENOKI_PRIVATE_KEY')),
-  process.env.REDIS_URL ? new UpstashStore(env('REDIS_URL'), env('REDIS_TOKEN')) : new MemoryStore(),
+serve({ fetch: makeApp(config, deps).fetch, port });
+console.log(
+  JSON.stringify({ msg: 'sponsor listening', port, network: config.network, store: memoryStore ? 'memory (dev only)' : 'upstash', trustProxy }),
 );
-
-const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: app.fetch, port });
-console.log(`sponsor listening on :${port}`);

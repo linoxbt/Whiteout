@@ -1,18 +1,9 @@
-// Vercel serverless entry (spec section 21). Same app and environment as src/server.ts.
+// Vercel serverless entry (spec section 21). Same app and environment loader as src/server.ts:
+// a missing PACKAGE_ID, ENOKI_PRIVATE_KEY, Redis or ALLOWED_ORIGINS fails the function at load.
 import { handle } from 'hono/vercel';
-import { enokiHttp, makeApp } from '../src/app.js';
-import { MemoryStore, UpstashStore } from '../src/quota.js';
+import { makeApp } from '../src/app.js';
+import { loadEnv } from '../src/env.js';
 
-const e = process.env;
-const app = makeApp(
-  {
-    network: e.NETWORK ?? 'testnet',
-    packageId: e.PACKAGE_ID ?? '',
-    maxGasBudgetMist: 50_000_000n,
-    allowedOrigins: e.ALLOWED_ORIGINS?.split(',').filter(Boolean) ?? [],
-  },
-  enokiHttp(e.ENOKI_PRIVATE_KEY ?? ''),
-  e.REDIS_URL ? new UpstashStore(e.REDIS_URL, e.REDIS_TOKEN ?? '') : new MemoryStore(),
-);
+const { config, deps } = loadEnv(process.env, 'vercel');
 
-export default handle(app);
+export default handle(makeApp(config, deps));

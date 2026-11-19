@@ -128,6 +128,11 @@ public fun update_name<T: drop>(config: &mut EnclaveConfig<T>, cap: &Cap<T>, nam
     config.name = name;
 }
 
+/// Whiteout addition: read the config name (used to prove cap ownership via update_name).
+public fun name<T>(config: &EnclaveConfig<T>): &String {
+    &config.name
+}
+
 public fun pcr0<T>(config: &EnclaveConfig<T>): &vector<u8> {
     &config.pcrs.0
 }
@@ -189,6 +194,30 @@ public fun create_intent_message<P: drop>(intent: u8, timestamp_ms: u64, payload
         timestamp_ms,
         payload,
     }
+}
+
+/// Whiteout addition (test-only): an unshared config for unit tests that need one.
+#[test_only]
+public fun new_config_for_testing<T: drop>(cap: &Cap<T>, ctx: &mut TxContext): EnclaveConfig<T> {
+    EnclaveConfig {
+        id: object::new(ctx),
+        name: b"test".to_string(),
+        pcrs: Pcrs(x"", x"", x""),
+        capability_id: cap.id.to_inner(),
+        version: 0,
+    }
+}
+
+#[test_only]
+public fun destroy_config_for_testing<T>(config: EnclaveConfig<T>) {
+    let EnclaveConfig { id, .. } = config;
+    id.delete();
+}
+
+#[test_only]
+public fun destroy_cap_for_testing<T>(cap: Cap<T>) {
+    let Cap { id } = cap;
+    id.delete();
 }
 
 #[test_only]

@@ -1640,6 +1640,7 @@ dependencies = [
  "serde_json",
  "sui-sdk-types",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

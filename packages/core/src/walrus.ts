@@ -47,7 +47,7 @@ async function eachPublisher<T>(publishers: string | string[], fn: (base: string
   let last: unknown = new Error('no Walrus publisher configured');
   for (const base of list) {
     try {
-      return await withRetry(() => fn(base), { tries: 2 });
+      return await fn(base); // one try each: the next publisher is the retry
     } catch (e) {
       last = e;
     }
@@ -102,7 +102,8 @@ export async function readBlob(aggregators: string[], blobId: string, fetchFn: t
 }
 
 const READ_TIMEOUT_MS = 20_000;
-const WRITE_TIMEOUT_MS = 180_000;
+// A 576-tile Quilt uploads in about 10 s; a publisher that takes a minute is skipped.
+const WRITE_TIMEOUT_MS = 60_000;
 
 async function readWithFailover(aggregators: string[], path: string, fetchFn: typeof fetch): Promise<Uint8Array> {
   let last: unknown;

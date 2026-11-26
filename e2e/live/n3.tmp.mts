@@ -1,0 +1,38 @@
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
+import { extname, join } from 'node:path';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { TileKind, findExplorerId, getExplorer, getGame, loadConfig, makeClient, tileIndex } from '@whiteout/core';
+import deploy from '../../deploy/testnet.json' with { type: 'json' };
+import { connect, installWallet } from './wallet.js';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright') as typeof import('playwright');
+const DIST = process.env.DIST!;
+const T: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.html': 'text/html', '.woff2': 'font/woff2' };
+const srv = createServer((q, r) => { let f = join(DIST, (q.url ?? '/').split('?')[0]!); if (!existsSync(f) || statSync(f).isDirectory()) f = join(DIST, 'index.html'); r.writeHead(200, { 'content-type': T[extname(f)] ?? 'application/octet-stream' }); createReadStream(f).pipe(r); }).listen(4182);
+const c = makeClient(loadConfig('testnet', deploy as never));
+const s = JSON.parse(readFileSync(process.env.LIVE_STATE!, 'utf8'));
+const gameId = s.huntK.gameId; const map = Uint8Array.from(Buffer.from(s.huntK.map, 'hex'));
+let col = 0; for (let x = 2; x < 22; x++) if (map[tileIndex(x, 1)] === TileKind.SNOW && map[tileIndex(x, 2)] !== TileKind.CREVASSE) { col = x; break; }
+const kp = Ed25519Keypair.fromSecretKey(s.keys.p2);
+const b = await chromium.launch(); const page = await (await b.newContext({ viewport: { width: 1360, height: 900 } })).newPage();
+const t0 = Date.now(); const ts = () => `${Math.round((Date.now() - t0) / 1000)}s`;
+page.on('console', (m) => { if (m.text().startsWith('[hunt]') || m.type() === 'error') console.log(ts(), m.text().slice(0, 250)); });
+await page.addInitScript(() => localStorage.setItem('whiteout:debug', '1'));
+await installWallet(page, 'E2E Player 2', kp, c as never);
+await page.goto(`http://127.0.0.1:4182/#/hunt/${gameId}`);
+await connect(page, 'E2E Player 2');
+await page.getByText('All 576 tiles match').waitFor({ timeout: 240_000 });
+await page.locator('.camp-strip i').nth(col).click();
+await page.getByRole('button', { name: /Set out/ }).click();
+await page.getByRole('button', { name: 'Allow' }).click({ timeout: 90_000 });
+await page.waitForFunction(() => { const el = document.querySelector('button[aria-label="North"]') as HTMLButtonElement | null; return el && !el.disabled; }, null, { timeout: 120_000 });
+await page.getByRole('button', { name: 'North', exact: true }).click();
+console.log(ts(), 'stepped north from column', col);
+await page.getByText(/Saved on-chain with your next step/).waitFor({ timeout: 120_000 });
+console.log(ts(), 'queued; leaving to History');
+await page.evaluate(() => (location.hash = '#/history'));
+const g = await getGame(c, gameId); const eid = (await findExplorerId(c, g, kp.toSuiAddress()))!;
+for (let i = 0; i < 60; i++) { const x = await getExplorer(c, eid); if (!x.pending) { console.log(ts(), 'RESOLVED on-chain while away'); break; } await page.waitForTimeout(2500); if (i === 59) console.log(ts(), 'still pending after 150 s'); }
+await b.close(); srv.close();

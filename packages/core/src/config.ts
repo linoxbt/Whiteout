@@ -51,12 +51,16 @@ export const DEFAULTS: Record<'testnet' | 'mainnet', Omit<NetworkConfig, 'packag
       'https://walrus-testnet-aggregator.nodes.guru',
     ],
     walrusPublisher: 'https://publisher.walrus-testnet.walrus.space',
+    // In order. All but the last allow browser uploads (CORS PUT); staketab is for the CLI.
     walrusPublishers: [
       'https://publisher.walrus-testnet.walrus.space',
-      'https://wal-publisher-testnet.staketab.org',
       'https://walrus-testnet-publisher.nodes.guru',
-      'https://walrus-testnet-publisher.stakely.io',
       'https://walrus-publisher-testnet.n1stake.com',
+      'https://publisher.walrus.banansen.dev',
+      'https://walrus-testnet-publisher.stakely.io',
+      'https://walrus-testnet-publisher.chainbase.online',
+      'https://testnet-publisher.walrus.graphyte.dev',
+      'https://wal-publisher-testnet.staketab.org',
     ],
   },
   mainnet: {

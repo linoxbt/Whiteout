@@ -1,0 +1,35 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { getGame, loadConfig, makeClient } from '@whiteout/core';
+import deploy from '../../deploy/testnet.json' with { type: 'json' };
+import { connect, installWallet } from './wallet.js';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright') as typeof import('playwright');
+const c = makeClient(loadConfig('testnet', deploy as never));
+const s = JSON.parse(readFileSync(process.env.LIVE_STATE!, 'utf8'));
+const id = s.huntC.gameId;
+const g = await getGame(c, id);
+console.log('huntC', id, 'status', g.status, 'prizes', g.prizesDeposited, '/', g.relics);
+const b = await chromium.launch();
+const page = await (await b.newContext({ viewport: { width: 1360, height: 900 } })).newPage();
+const logs: string[] = [];
+page.on('console', (m) => logs.push(`${m.type()}: ${m.text().slice(0, 300)}`));
+page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
+page.on('requestfailed', (r) => logs.push(`reqfail: ${r.url().slice(0, 100)} ${r.failure()?.errorText}`));
+page.on('response', (r) => { if (/walrus|publisher|quilts/.test(r.url())) logs.push(`resp ${r.status()} ${r.url().slice(0, 100)}`); });
+const host = Ed25519Keypair.fromSecretKey(process.env.WHITEOUT_HOST_KEY!);
+await installWallet(page, 'E2E Host', host, c as never);
+await page.goto(`https://whiteout-hunt.netlify.app/#/host/${id}`);
+await connect(page, 'E2E Host');
+await page.getByRole('button', { name: 'Deal here' }).click({ timeout: 60_000 });
+const t0 = Date.now();
+for (let i = 0; i < 24; i++) {
+  await page.waitForTimeout(5000);
+  const txt = (await page.innerText('main')).replace(/\s+/g, ' ');
+  const m = txt.match(/(Sealing[^.]*|Uploading[^.]*|Deal checked[^.]*|Seal[^.]{0,60}\d+\/576|error[^.]{0,120}|failed[^.]{0,120})/i);
+  console.log(Math.round((Date.now() - t0) / 1000) + 's', m?.[0] ?? '-');
+  if (/Deal checked and uploaded/.test(txt)) break;
+}
+console.log(logs.slice(-25).join('\n'));
+await b.close();

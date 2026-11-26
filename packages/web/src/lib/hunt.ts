@@ -86,6 +86,15 @@ export interface HuntView {
 
 const seal = makeSealClient(suiClient, config);
 
+/** Opt-in tracing of the action path: localStorage.setItem('whiteout:debug', '1'). */
+const debug = (...a: unknown[]) => {
+  try {
+    if (localStorage.getItem('whiteout:debug') === '1') console.info('[hunt]', ...a);
+  } catch {
+    /* no storage */
+  }
+};
+
 export class Hunt {
   view: HuntView = {
     loading: true,
@@ -470,6 +479,7 @@ export class Hunt {
   async resolveNow() {
     const me = this.view.me;
     const tile = this.view.queuedResolve ?? (me?.pending ? this.view.tiles.get(`${me.pending.x},${me.pending.y}`) : undefined);
+    debug('resolveNow', { pending: me?.pending, tile: tile && [tile.x, tile.y], busy: this.view.busy });
     if (!me?.pending || !tile || tile.x !== me.pending.x || tile.y !== me.pending.y) return;
     if (this.view.busy) {
       // Another action is on its way; try again when it lands (it may carry this resolve).
@@ -648,8 +658,10 @@ export class Hunt {
     const margin = 20_000;
     const byDeadline = me.pending.deadlineMs - this.now() - margin;
     const hold = Math.max(0, Math.min(60_000, (this.view.game?.resolveWindowMs ?? 300_000) / 2, byDeadline));
+    debug('armHold', tile.x, tile.y, 'in', hold);
     this.#holdTimer = setTimeout(() => {
       this.#holdTimer = null;
+      debug('hold fired', this.view.queuedResolve === tile);
       if (this.view.queuedResolve === tile) void this.resolveNow();
     }, hold);
   }
@@ -694,7 +706,9 @@ export class Hunt {
     this.#set({ busy: true });
     try {
       await fn();
+      debug('act ok');
     } catch (e) {
+      debug('act failed', (e as Error).message);
       const err = e as TxError;
       if (err.status === 401) {
         this.#set({ notice: { kind: 'auth', text: 'Your Google session expired. Log in again: your yeti and its countdown are safe on-chain.' } });

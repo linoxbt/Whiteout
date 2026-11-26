@@ -1,6 +1,6 @@
 # Architecture
 
-Sui is the only source of truth. There is no Whiteout database: every client rebuilds state from on-chain objects and events. The Whiteout team runs two things: a stateless sponsor service, and the dealer enclave for a few minutes per hunt.
+Sui is the only source of truth. There is no Whiteout database: every client rebuilds state from on-chain objects and events. Public full nodes prune old events (testnet keeps days, not weeks), so a client reads a hunt's events newest-first back to its creation, and when the node no longer has them it reads the same facts from the Game itself: its `address -> Explorer` table and its `PrizeKey` prize fields (`reconcileTrail` in `packages/core/src/chain.ts`). History lists the hunts whose events the node still keeps. The Whiteout team runs two things: a stateless sponsor service, and the dealer enclave for a few minutes per hunt.
 
 ```
                  ┌──── Sui (package `whiteout`; immutable on Mainnet) ────┐

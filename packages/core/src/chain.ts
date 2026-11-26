@@ -1,6 +1,7 @@
 /** Chain reads: Game, Explorer, events and the public trail. Sui is the only source of truth. */
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { NetworkConfig } from './config.js';
+import { ExplorerStatus } from './constants.js';
 import { bcs } from '@mysten/sui/bcs';
 import { normalizeStructTag } from '@mysten/sui/utils';
 import {
@@ -60,6 +61,8 @@ export async function getExplorers(client: Client, ids: string[]): Promise<Explo
  * the game's own lifetime, not the package's whole history. Later polls pass the
  * returned cursor and read forward from it. `complete` is false only when the page
  * budget ran out; the cursor still moves forward, so the next poll continues.
+ * `fromStart` is false when the node no longer has the game's oldest events: call
+ * `reconcileTrail` to fill in what they would have said.
  */
 export async function listGameEvents(
   client: Client,
@@ -67,7 +70,7 @@ export async function listGameEvents(
   gameId: string,
   after: string | null = null,
   maxPages = 400,
-): Promise<{ events: GameEvent[]; cursor: string | null; complete: boolean }> {
+): Promise<{ events: GameEvent[]; cursor: string | null; complete: boolean; fromStart: boolean }> {
   const mine = (e: Parameters<typeof parseEvent>[1]) => {
     const parsed = parseEvent(packageId, e);
     return parsed && sameId((parsed.data as { game_id: string }).game_id, gameId) ? parsed : null;
@@ -83,9 +86,9 @@ export async function listGameEvents(
         if (p) out.push(p);
       }
       cursor = res.endCursor ?? cursor;
-      if (!res.hasNextPage) return { events: out, cursor, complete: true };
+      if (!res.hasNextPage) return { events: out, cursor, complete: true, fromStart: true };
     }
-    return { events: out, cursor, complete: false };
+    return { events: out, cursor, complete: false, fromStart: true };
   }
   // Newest first, back to the game's creation.
   const back: GameEvent[] = [];
@@ -99,28 +102,19 @@ export async function listGameEvents(
         const p = mine(e);
         if (!p) continue;
         back.push(p);
-        if (p.name === 'LobbyCreated') return { events: back.reverse(), cursor: newest, complete: true };
+        if (p.name === 'LobbyCreated') return { events: back.reverse(), cursor: newest, complete: true, fromStart: true };
       }
       before = res.endCursor ?? before;
-      if (!res.hasNextPage) return { events: back.reverse(), cursor: newest, complete: true };
+      if (!res.hasNextPage) return { events: back.reverse(), cursor: newest, complete: true, fromStart: false };
     }
-    return { events: back.reverse(), cursor: newest, complete: false };
+    return { events: back.reverse(), cursor: newest, complete: false, fromStart: false };
   } catch (e) {
-    // Past the node's pruned edge: read forward from the earliest event it still has.
+    // Past the node's pruned edge: the older events are gone from this node. What was
+    // read so far is everything it still has for this game; the caller fills the rest
+    // from the game's own objects (reconcileTrail).
     if (!/earliest available|pruned|below/i.test((e as Error).message)) throw e;
+    return { events: back.reverse(), cursor: newest, complete: true, fromStart: false };
   }
-  const out: GameEvent[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < maxPages; page++) {
-    const res = await client.core.listEvents({ filter, limit: 50, ...(cursor ? { after: cursor } : {}) });
-    for (const e of res.events) {
-      const p = mine(e);
-      if (p) out.push(p);
-    }
-    cursor = res.endCursor ?? cursor;
-    if (!res.hasNextPage) return { events: out, cursor, complete: true };
-  }
-  return { events: out, cursor, complete: false };
 }
 
 /**
@@ -150,6 +144,97 @@ export async function listGames(client: Client, packageId: string, limit = 50): 
     if (!res.hasNextPage) break;
   }
   return found.reverse().slice(0, limit);
+}
+
+// === State without events ===
+// Public full nodes prune old events (testnet keeps days, not weeks), so a long hunt
+// cannot rely on its event history alone. The Game keeps what matters on-chain: an
+// address -> Explorer table, and each held prize under a PrizeKey dynamic field.
+
+const FieldAddressId = bcs.struct('Field', { id: bcs.Address, name: bcs.Address, value: bcs.Address });
+
+const isMissing = (e: unknown) => /not.?found|does not exist|NotExists|dynamic field/i.test((e as Error).message ?? '');
+
+/** The Explorer `owner` holds in `game`, read from the game's table, or null. */
+export async function findExplorerId(client: Client, game: Pick<GameState, 'explorersTable'>, owner: string): Promise<string | null> {
+  try {
+    const { dynamicField } = await client.core.getDynamicField({
+      parentId: game.explorersTable,
+      name: { type: 'address', bcs: bcs.Address.serialize(owner).toBytes() },
+    });
+    return bcs.Address.parse(dynamicField.value.bcs);
+  } catch (e) {
+    if (isMissing(e)) return null;
+    throw e;
+  }
+}
+
+/** Every Explorer of `game` (owner -> Explorer ID), read from the game's table. */
+export async function listExplorerIds(client: Client, game: Pick<GameState, 'explorersTable'>): Promise<Map<string, string>> {
+  const fieldIds: string[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const res = await client.core.listDynamicFields({ parentId: game.explorersTable, limit: 50, ...(cursor ? { cursor } : {}) });
+    fieldIds.push(...res.dynamicFields.map((f) => f.fieldId));
+    cursor = res.cursor;
+    if (!res.hasNextPage) break;
+  }
+  const out = new Map<string, string>();
+  for (let i = 0; i < fieldIds.length; i += 50) {
+    const { objects } = await client.core.getObjects({ objectIds: fieldIds.slice(i, i + 50), include: { content: true } });
+    for (const o of objects) {
+      if (o instanceof Error) continue;
+      const f = FieldAddressId.parse(o.content);
+      out.set(f.name, f.value);
+    }
+  }
+  return out;
+}
+
+/** Prize types still held by the game, by rank (PrizeKey dynamic object fields). */
+export async function prizeTypesOf(client: Client, gameId: string): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < 10; page++) {
+    const res = await client.core.listDynamicFields({ parentId: gameId, limit: 50, ...(cursor ? { cursor } : {}) });
+    for (const f of res.dynamicFields) {
+      if (!/::game::PrizeKey$/.test(f.name.type)) continue;
+      out.set(f.name.bcs[0]!, normalizeStructTag(f.valueType));
+    }
+    cursor = res.cursor;
+    if (!res.hasNextPage) break;
+  }
+  return out;
+}
+
+/**
+ * Fills the trail's explorers from the game's own table, for when the event history
+ * no longer reaches back to the game's creation. Positions and outcomes come from the
+ * Explorer objects; newer events then keep them current.
+ */
+export async function reconcileTrail(client: Client, game: GameState, trail: Trail): Promise<Trail> {
+  const ids = await listExplorerIds(client, game);
+  const missing = [...ids.values()].filter((id) => !trail.explorers.has(id));
+  if (missing.length) {
+    for (const x of await getExplorers(client, missing)) {
+      trail.explorers.set(x.id, {
+        owner: x.owner,
+        x: x.x,
+        y: x.y,
+        frozen: x.status === ExplorerStatus.FROZEN,
+        finder: x.status === ExplorerStatus.FINDER,
+        withdrawn: x.status === ExplorerStatus.WITHDRAWN,
+        steps: x.steps,
+      });
+    }
+  }
+  if (game.prizesHeld > 0) {
+    for (const [rank, type] of await prizeTypesOf(client, game.id)) {
+      trail.prizeTypes.set(rank, type);
+      if (rank === 1) trail.prizeType = type;
+    }
+  }
+  return trail;
 }
 
 // === Phase 2: allowlists ===

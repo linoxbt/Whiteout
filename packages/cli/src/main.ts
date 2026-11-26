@@ -27,7 +27,10 @@ import {
   fromHex,
   getExplorers,
   isEnded,
+  listExplorerIds,
   listGameEvents,
+  prizeTypesOf,
+  reconcileTrail,
   makeSealClient,
   readAllTiles,
   storeBlob,
@@ -314,8 +317,11 @@ program
       try {
       const { game, ctx } = await gameCtx(e, o.game);
       const page = await listGameEvents(e.client, e.cfg.packageId, o.game, cursor);
-      cursor = page.cursor;
+      const firstRead = cursor === null;
+      cursor = page.cursor ?? cursor;
       applyEvents(trail, page.events);
+      // Old events pruned by the node: take the yetis from the game's own table.
+      if (firstRead && !page.fromStart) await reconcileTrail(e.client, game, trail);
       for (const ev of page.events) console.log(`  event ${ev.name} ${summarize(ev.data)}`);
       const explorers = await getExplorers(e.client, [...trail.explorers.keys()]);
       const now = Date.now();
@@ -372,10 +378,11 @@ program
   .requiredOption('--game <id>')
   .action(async (o) => {
     const e = env();
-    const { ctx } = await gameCtx(e, o.game);
-    const trail = applyEvents(emptyTrail(), (await listGameEvents(e.client, e.cfg.packageId, o.game)).events);
+    const { game, ctx } = await gameCtx(e, o.game);
+    // The game's own table lists every yeti, even after the node prunes old events.
+    const ids = [...(await listExplorerIds(e.client, game)).values()];
     const now = Date.now();
-    const overdue = (await getExplorers(e.client, [...trail.explorers.keys()])).filter(
+    const overdue = (await getExplorers(e.client, ids)).filter(
       (x) => x.status === ExplorerStatus.ACTIVE && x.pending && now > x.pending.deadlineMs,
     );
     if (!overdue.length) console.log('Nobody is overdue.');
@@ -568,10 +575,10 @@ async function assertImmutable(e: Env) {
   }
 }
 
+/** A held prize's type, read from the game's PrizeKey field (no event history needed). */
 async function prizeTypeOf(e: Env, gameId: string, rank = 1): Promise<string> {
-  const t = applyEvents(emptyTrail(), (await listGameEvents(e.client, e.cfg.packageId, gameId)).events);
-  const type = t.prizeTypes.get(rank);
-  if (!type) throw new Error(`Could not find the rank ${rank} prize type in the events.`);
+  const type = (await prizeTypesOf(e.client, gameId)).get(rank);
+  if (!type) throw new Error(`The game holds no rank ${rank} prize.`);
   return type;
 }
 

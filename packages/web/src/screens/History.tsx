@@ -18,9 +18,11 @@ interface Summary {
   finders: Array<{ rank: number; finder: string; pot: bigint }>;
   blizzards: number;
   steps: number;
+  /** The node no longer has this hunt's oldest events: counts from events are lower bounds. */
+  partial: boolean;
 }
 
-const empty = (): Summary => ({ players: new Set(), frozen: 0, toWell: 0n, finders: [], blizzards: 0, steps: 0 });
+const empty = (): Summary => ({ players: new Set(), frozen: 0, toWell: 0n, finders: [], blizzards: 0, steps: 0, partial: false });
 
 const MAX_PAGES = 120;
 
@@ -91,7 +93,9 @@ async function scanEvents(): Promise<{ games: Map<string, Summary>; more: boolea
     before = res.endCursor ?? before;
     if (!res.hasNextPage) break;
   }
-  for (const id of [...out.keys()]) if (!created.has(id)) out.delete(id);
+  // A hunt whose creation the node has pruned is kept; its row says the counts are partial,
+  // and players and finders come from the Game object itself.
+  for (const [id, s] of out) s.partial = !created.has(id);
   return { games: out, more };
 }
 
@@ -115,7 +119,14 @@ export function History() {
         const games = await Promise.all([...summaries.keys()].map((id) => getGame(suiClient, id, config.packageId).catch(() => null)));
         const list = games
           .filter((g): g is GameState => !!g)
-          .map((g) => ({ g, s: summaries.get(g.id) ?? empty() }))
+          .map((g) => {
+            const s = summaries.get(g.id) ?? empty();
+            // Finders are on the Game itself; fill any whose claim event was pruned.
+            g.finders.forEach((f, i) => {
+              if (!s.finders.some((x) => x.rank === i + 1)) s.finders.push({ rank: i + 1, finder: f, pot: 0n });
+            });
+            return { g, s };
+          })
           .sort((a, b) => (b.g.endsAt || b.g.openAt) - (a.g.endsAt || a.g.openAt));
         if (!stop) setRows(list);
       } catch (e) {
@@ -137,7 +148,7 @@ export function History() {
     // The total is in SUI, so it counts SUI hunts only.
     (t, { g, s }) => ({
       hunts: t.hunts + 1,
-      players: t.players + s.players.size,
+      players: t.players + Math.max(s.players.size, g.playerCount),
       finds: t.finds + s.finders.length,
       well: t.well + (/::sui::SUI$/.test(g.coinType) ? s.toWell : 0n),
     }),
@@ -235,9 +246,9 @@ export function History() {
                   )}
                 </div>
                 <dl className="log-nums">
-                  <div><dt>Yetis</dt><dd>{s.players.size}</dd></div>
-                  <div><dt>Frozen</dt><dd>{s.frozen}</dd></div>
-                  <div><dt>Steps</dt><dd>{s.steps}</dd></div>
+                  <div><dt>Yetis</dt><dd>{Math.max(s.players.size, g.playerCount)}</dd></div>
+                  <div><dt>Frozen</dt><dd>{s.frozen}{s.partial ? '+' : ''}</dd></div>
+                  <div><dt>Steps</dt><dd>{s.steps}{s.partial ? '+' : ''}</dd></div>
                   <div><dt>Wells</dt><dd>{amount(s.toWell, g.coinType)}</dd></div>
                 </dl>
               </a>

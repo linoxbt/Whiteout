@@ -19,6 +19,7 @@ import { PrizeLadder } from '../components/Phase2';
 import { config, suiClient } from '../config';
 import { createSession, loadSession } from '../lib/session';
 import type { Hunt, HuntView } from '../lib/hunt';
+import { frozenCount } from '../lib/format';
 import { amount, shortId } from '../lib/format';
 
 export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
@@ -133,7 +134,7 @@ export function Thaw({ hunt, v }: { hunt: Hunt; v: HuntView }) {
           </div>
           <div>
             <div className="stat-label">Frozen</div>
-            <div className="stat-value" style={{ fontSize: '1rem' }}>{v.trail.frozenAt.length}</div>
+            <div className="stat-value" style={{ fontSize: '1rem' }}>{frozenCount(v.trail)}</div>
           </div>
           <div>
             <div className="stat-label">To wells</div>

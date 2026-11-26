@@ -19,6 +19,7 @@ import {
   getGame,
   isEnded,
   listGameEvents,
+  reconcileTrail,
   sameId,
   tx,
   type AllowlistState,
@@ -441,8 +442,11 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
     st.busy = true;
     try {
       const [game, page] = await Promise.all([getGame(suiClient, gameId, config.packageId), listGameEvents(suiClient, config.packageId, gameId, st.cursor)]);
+      const firstRead = st.cursor === null;
       st.cursor = page.cursor ?? st.cursor;
       const t = applyEvents(st.trail, page.events);
+      // Old events pruned by the node: take yetis and prize types from the game itself.
+      if (firstRead && !page.fromStart) await reconcileTrail(suiClient, game, t);
       setG(game);
       setTrail({ ...t });
       setLoadError(null);

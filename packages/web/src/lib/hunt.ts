@@ -23,6 +23,8 @@ import {
   ciphertextServers,
   decryptTiles,
   emptyTrail,
+  findExplorerId,
+  reconcileTrail,
   getExplorer,
   getGame,
   isEnded,
@@ -163,12 +165,15 @@ export class Hunt {
     if (this.#holdTimer) clearTimeout(this.#holdTimer);
     this.#holdTimer = null;
     this.#gateFor = null;
+    this.#lookedUp = null;
     this.#set({ me: null, tiles: new Map(), queuedResolve: null, readingDeclined: false });
     void this.refresh();
   }
 
   // --- Reads ------------------------------------------------------------------
 
+  /** The address whose Explorer was looked up in the game's table (once per address). */
+  #lookedUp: string | null = null;
   #refreshing: Promise<void> | null = null;
   #refreshAgain = false;
 
@@ -203,13 +208,21 @@ export class Hunt {
         listGameEvents(suiClient, config.packageId, this.gameId, this.#cursor),
         readClock(),
       ]);
-      this.#cursor = page.cursor;
+      const firstRead = this.#cursor === null;
+      this.#cursor = page.cursor ?? this.#cursor;
       this.#clockOffset = clock - Date.now();
       const trail = applyEvents(this.view.trail, page.events);
+      // The node may no longer hold this hunt's oldest events (it prunes after days):
+      // read the yetis and prizes from the game's own objects instead.
+      if (firstRead && !page.fromStart) await reconcileTrail(suiClient, game, trail);
       let me: ExplorerState | null = null;
       if (address) {
-        const mine = [...trail.explorers.entries()].find(([, e]) => sameId(e.owner, address));
-        if (mine) me = await getExplorer(suiClient, mine[0], config.packageId);
+        let mineId = [...trail.explorers.entries()].find(([, e]) => sameId(e.owner, address))?.[0] ?? null;
+        if (!mineId && this.#lookedUp !== address) {
+          this.#lookedUp = address;
+          mineId = await findExplorerId(suiClient, game, address);
+        }
+        if (mineId) me = await getExplorer(suiClient, mineId, config.packageId);
       }
       // The player switched accounts mid-read: the next pass reads for the new one.
       if (address !== this.address) return;

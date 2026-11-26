@@ -71,3 +71,8 @@ export const kindName = (k: number) => TILE_KIND_NAMES[k] ?? '?';
 export function warmthWord(w: number): string {
   return ['frozen', 'cold', 'cool', 'mild', 'warm', 'hot'][w] ?? '';
 }
+
+/** Yetis frozen: from the freeze events, or from Explorer states when old events are pruned. */
+export function frozenCount(trail: { frozenAt: unknown[]; explorers: Map<string, { frozen: boolean }> }): number {
+  return Math.max(trail.frozenAt.length, [...trail.explorers.values()].filter((e) => e.frozen).length);
+}

@@ -68,8 +68,13 @@ for (const [label, opts] of [
     const a = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight, vw: innerWidth }));
     await page.waitForTimeout(4000);
     const b = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }));
+    await page.waitForTimeout(4000);
+    const c = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }));
     if (a.w > a.vw + 1) problems.push(`${r || 'home'}: ${a.w}px wide on a ${a.vw}px screen`);
-    if (b.h > a.h + 40 || b.w > a.w) problems.push(`${r || 'home'}: kept growing (${a.w}x${a.h} -> ${b.w}x${b.h})`);
+    // Content that arrives from the chain may grow a page once; growing in two
+    // consecutive intervals is the runaway-layout bug this guards against.
+    const grew = (x: { w: number; h: number }, y: { w: number; h: number }) => y.h > x.h + 40 || y.w > x.w;
+    if (grew(a, b) && grew(b, c)) problems.push(`${r || 'home'}: kept growing (${a.w}x${a.h} -> ${b.w}x${b.h} -> ${c.w}x${c.h})`);
     const header = await page.locator('header.top').count();
     if (!header) problems.push(`${r || 'home'}: no header rendered`);
   }

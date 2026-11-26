@@ -35,8 +35,10 @@ Testnet package: `0xa2ccda7c8479b551a78aecff79a9efca295cca172a6ca8d4315718e960ac
 Tests added: 1 148 Move tests (incl. 10 024 conservation sequences and the regressions
 above), 10 000 generated maps in the Rust dealer, core tests for pruned-node reads,
 sponsor tests (72), a Playwright smoke test in CI, and a live testnet browser run
-(`e2e/live/run.mts`) covering host console, three players, claims, a freeze, leaving the
-page mid-turn, thaw, verify, history, browser deal, blizzard and holder gating.
+(`e2e/live/run.mts`, 42/42 on 26 Nov 2026) covering host console, three players, claims,
+a freeze, a queued reveal reaching the chain while the player is on another page, thaw,
+verify, history, browser deal, blizzard and holder gating. Test wallets are funded with
+`e2e/live/faucet.py` (the faucet's proof-of-work API).
 
 ## Open
 

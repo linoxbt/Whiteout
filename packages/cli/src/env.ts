@@ -63,7 +63,7 @@ export function ctxFor(env: Env, coinType: string): tx.Ctx {
 }
 
 export async function gameCtx(env: Env, gameId: string): Promise<{ game: GameState; ctx: tx.Ctx }> {
-  const game = await getGame(env.client, gameId);
+  const game = await getGame(env.client, gameId, env.cfg.packageId);
   return { game, ctx: ctxFor(env, game.coinType) };
 }
 

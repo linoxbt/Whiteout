@@ -51,8 +51,7 @@ jobs:
     name: Compare PCRs
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -62,8 +61,21 @@ jobs:
           diff pcrs-a/nitro.pcrs pcrs-b/nitro.pcrs
           if grep -qE '^0{96}' pcrs-a/nitro.pcrs; then echo "All-zero PCRs: debug build"; exit 1; fi
           echo "Reproducible:"; cat pcrs-a/nitro.pcrs
+
+  release:
+    name: Attach PCRs to the release
+    # Only a dealer-v* tag publishes; every other build stays read-only.
+    if: startsWith(github.ref, 'refs/tags/dealer-v')
+    needs: compare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pcrs-a
+          path: pcrs-a
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/dealer-v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

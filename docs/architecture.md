@@ -29,7 +29,7 @@ Sui is the only source of truth. There is no Whiteout database: every client reb
 | `move/enclave` | Nautilus enclave package, vendored | upstream tests |
 | `packages/core` | Message formats, identities, map rules, deal, tx builders, chain reads, Seal/Walrus helpers | Vitest; re-verifies all Move fixture signatures |
 | `packages/cli` | Host CLI: create, deal, open, status, settle, thaw, verify, admin | Vitest; checks real Rust dealer output |
-| `packages/sponsor` | Sponsor service: Whiteout-only policy, no gas coin, per-hunt quota | Vitest (policy + HTTP) |
+| `packages/sponsor` | Sponsor service: Whiteout-only policy, no gas coin, 600 per address per 24 h, gas cap | Vitest (policy, HTTP, store) |
 | `packages/web` | Player, spectator, thaw and verify screens | Vitest; production build in CI |
 | `enclave/whiteout-dealer` | Rust dealer in the Nautilus template layout | `cargo test`: map rules, fixture signatures, Seal round trip |
 | `e2e` | Full hunt on a local Sui network | runs in CI against `sui start` |

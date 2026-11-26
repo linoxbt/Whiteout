@@ -109,12 +109,39 @@ export async function listGameEvents(
     }
     return { events: back.reverse(), cursor: newest, complete: false, fromStart: false };
   } catch (e) {
-    // Past the node's pruned edge: the older events are gone from this node. What was
-    // read so far is everything it still has for this game; the caller fills the rest
-    // from the game's own objects (reconcileTrail).
-    if (!/earliest available|pruned|below/i.test((e as Error).message)) throw e;
-    return { events: back.reverse(), cursor: newest, complete: true, fromStart: false };
+    // A newest-first scan errors once it has to look past the node's pruned edge (on a
+    // quiet package that can be the very first page). Read everything the node still
+    // keeps oldest-first instead; the caller fills what was pruned from the game's own
+    // objects (reconcileTrail).
+    if (!isPrunedError(e)) throw e;
   }
+  return forwardFromEarliest(client, filter, mine, maxPages);
+}
+
+/** True for the error a full node returns for data older than it keeps. */
+export function isPrunedError(e: unknown): boolean {
+  return /earliest available|below (the )?earliest|pruned/i.test((e as Error)?.message ?? '');
+}
+
+async function forwardFromEarliest(
+  client: Client,
+  filter: { emitModule: string },
+  mine: (e: Parameters<typeof parseEvent>[1]) => GameEvent | null,
+  maxPages: number,
+): Promise<{ events: GameEvent[]; cursor: string | null; complete: boolean; fromStart: boolean }> {
+  const out: GameEvent[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await client.core.listEvents({ filter, limit: 50, ...(cursor ? { after: cursor } : {}) });
+    for (const e of res.events) {
+      const p = mine(e);
+      if (p) out.push(p);
+    }
+    cursor = res.endCursor ?? cursor;
+    if (!res.hasNextPage) break;
+    if (page === maxPages - 1) return { events: out, cursor, complete: false, fromStart: out.some((e) => e.name === 'LobbyCreated') };
+  }
+  return { events: out, cursor, complete: true, fromStart: out.some((e) => e.name === 'LobbyCreated') };
 }
 
 /**
@@ -133,7 +160,7 @@ export async function listGames(client: Client, packageId: string, limit = 50): 
     const res = await client.core.listEvents({ filter: { eventType: type }, limit, order: 'descending' });
     return ids(res.events);
   } catch (e) {
-    if (!/earliest available|pruned|below/i.test((e as Error).message)) throw e;
+    if (!isPrunedError(e)) throw e;
   }
   const found: string[] = [];
   let after: string | null = null;
@@ -153,7 +180,7 @@ export async function listGames(client: Client, packageId: string, limit = 50): 
 
 const FieldAddressId = bcs.struct('Field', { id: bcs.Address, name: bcs.Address, value: bcs.Address });
 
-const isMissing = (e: unknown) => /not.?found|does not exist|NotExists|dynamic field/i.test((e as Error).message ?? '');
+const isMissing = (e: unknown) => /not.?found|does not exist|NotExists|DynamicFieldNotFound/i.test((e as Error)?.message ?? '');
 
 /** The Explorer `owner` holds in `game`, read from the game's table, or null. */
 export async function findExplorerId(client: Client, game: Pick<GameState, 'explorersTable'>, owner: string): Promise<string | null> {

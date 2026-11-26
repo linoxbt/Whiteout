@@ -434,7 +434,7 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
   const [progress, setProgress] = useState('');
 
   // Events are read once back to the game's creation, then polled forward from a cursor.
-  const events = useRef<{ trail: Trail; cursor: string | null; busy: boolean }>({ trail: emptyTrail(), cursor: null, busy: false });
+  const events = useRef<{ trail: Trail; cursor: string | null; busy: boolean; reconcile: boolean }>({ trail: emptyTrail(), cursor: null, busy: false, reconcile: false });
   const [loadError, setLoadError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     const st = events.current;
@@ -445,8 +445,13 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
       const firstRead = st.cursor === null;
       st.cursor = page.cursor ?? st.cursor;
       const t = applyEvents(st.trail, page.events);
-      // Old events pruned by the node: take yetis and prize types from the game itself.
-      if (firstRead && !page.fromStart) await reconcileTrail(suiClient, game, t);
+      // Old events pruned by the node: take yetis and prize types from the game itself,
+      // retrying on the next reload until it works.
+      if (firstRead && !page.fromStart) st.reconcile = true;
+      if (st.reconcile) {
+        await reconcileTrail(suiClient, game, t);
+        st.reconcile = false;
+      }
       setG(game);
       setTrail({ ...t });
       setLoadError(null);
@@ -461,7 +466,7 @@ function Manage({ gameId, address }: { gameId: string; address: string }) {
     }
   }, [gameId]);
   useEffect(() => {
-    events.current = { trail: emptyTrail(), cursor: null, busy: false };
+    events.current = { trail: emptyTrail(), cursor: null, busy: false, reconcile: false };
     void reload();
     myHostCaps(address)
       .then((caps) => setCapId(caps.find((c) => c.gameId === gameId)?.capId ?? null))

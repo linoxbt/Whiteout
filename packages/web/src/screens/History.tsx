@@ -4,7 +4,7 @@
  */
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { useEffect, useMemo, useState } from 'react';
-import { GameStatus, getGame, parseEvent, sameId, type GameEvent, type GameState } from '@whiteout/core';
+import { GameStatus, getGame, isPrunedError, parseEvent, sameId, type GameEvent, type GameState } from '@whiteout/core';
 import { Mark } from '../components/Logo';
 import { HuntTags } from '../components/Phase2';
 import { config, configured, suiClient } from '../config';
@@ -27,15 +27,48 @@ const empty = (): Summary => ({ players: new Set(), frozen: 0, toWell: 0n, finde
 const MAX_PAGES = 120;
 
 /**
- * Whiteout events grouped by game, newest first, up to MAX_PAGES pages: the logbook
- * shows the most recent hunts and says when older ones were left out. A game whose
- * LobbyCreated was not reached is dropped, as its summary would be partial.
+ * Whiteout events grouped by game, newest first, up to MAX_PAGES pages (or everything
+ * the node still keeps, when it has pruned older events). A hunt whose creation event
+ * is gone is kept and marked partial; players and finders then come from the Game.
  */
 async function scanEvents(): Promise<{ games: Map<string, Summary>; more: boolean }> {
   const out = new Map<string, Summary>();
   const created = new Set<string>();
   let before: string | null = null;
   let more = false;
+  const tally = (raw: { eventType: string; bcs: Uint8Array }) => {
+    const ev = parseEvent(config.packageId, raw) as GameEvent | null;
+    if (!ev) return;
+    const id = (ev.data as { game_id: string }).game_id;
+    const s = out.get(id) ?? empty();
+    out.set(id, s);
+    switch (ev.name) {
+      case 'LobbyCreated':
+        created.add(id);
+        break;
+      case 'ExplorerJoined':
+        s.players.add(ev.data.owner);
+        break;
+      case 'Stepped':
+        s.steps += 1;
+        break;
+      case 'ExplorerFrozen':
+        s.frozen += 1;
+        s.toWell += BigInt(ev.data.to_well);
+        break;
+      case 'GameFinalized':
+        s.toWell += BigInt(ev.data.to_well);
+        break;
+      case 'RelicClaimed':
+        s.finders.push({ rank: ev.data.rank, finder: ev.data.finder, pot: BigInt(ev.data.pot) });
+        break;
+      case 'BlizzardStarted':
+        s.blizzards += 1;
+        break;
+      default:
+        break;
+    }
+  };
   for (let page = 0; ; page++) {
     if (page >= MAX_PAGES) {
       more = true;
@@ -50,46 +83,24 @@ async function scanEvents(): Promise<{ games: Map<string, Summary>; more: boolea
         ...(before ? { before } : {}),
       });
     } catch (e) {
-      // Older checkpoints are pruned on public nodes: show what is still readable.
-      if (/earliest available|pruned|below/i.test((e as Error).message)) {
-        more = true;
-        break;
+      // Older checkpoints are pruned on public nodes. A newest-first scan errors when it
+      // reaches that edge (on a quiet package, even on its first page): read what the
+      // node still keeps from the oldest end instead.
+      if (!isPrunedError(e)) throw e;
+      more = true;
+      out.clear();
+      created.clear();
+      let after: string | null = null;
+      for (let p = 0; p < MAX_PAGES; p++) {
+        const fwd: { events: Array<{ eventType: string; bcs: Uint8Array }>; hasNextPage: boolean; endCursor?: string | null } =
+          await suiClient.core.listEvents({ filter: { emitModule: `${config.packageId}::game` }, limit: 50, ...(after ? { after } : {}) });
+        for (const raw of fwd.events) tally(raw);
+        after = fwd.endCursor ?? after;
+        if (!fwd.hasNextPage) break;
       }
-      throw e;
+      break;
     }
-    for (const raw of res.events) {
-      const ev = parseEvent(config.packageId, raw) as GameEvent | null;
-      if (!ev) continue;
-      const id = (ev.data as { game_id: string }).game_id;
-      const s = out.get(id) ?? empty();
-      out.set(id, s);
-      switch (ev.name) {
-        case 'LobbyCreated':
-          created.add(id);
-          break;
-        case 'ExplorerJoined':
-          s.players.add(ev.data.owner);
-          break;
-        case 'Stepped':
-          s.steps += 1;
-          break;
-        case 'ExplorerFrozen':
-          s.frozen += 1;
-          s.toWell += BigInt(ev.data.to_well);
-          break;
-        case 'GameFinalized':
-          s.toWell += BigInt(ev.data.to_well);
-          break;
-        case 'RelicClaimed':
-          s.finders.push({ rank: ev.data.rank, finder: ev.data.finder, pot: BigInt(ev.data.pot) });
-          break;
-        case 'BlizzardStarted':
-          s.blizzards += 1;
-          break;
-        default:
-          break;
-      }
-    }
+    for (const raw of res.events) tally(raw);
     before = res.endCursor ?? before;
     if (!res.hasNextPage) break;
   }

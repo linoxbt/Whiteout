@@ -175,9 +175,9 @@ for (const verb of ['add', 'remove'] as const) {
       const raw = [...(o.file ? readFileSync(o.file, 'utf8').split(/\s+/) : []), ...(o.addresses ? String(o.addresses).split(',') : [])];
       const addrs = [...new Set(raw.map((a) => a.trim().toLowerCase()).filter((a) => /^0x[0-9a-f]{1,64}$/.test(a)))];
       if (!addrs.length) throw new Error('No addresses given.');
-      // Up to 1 000 per Move call, a few calls per transaction.
-      for (let i = 0; i < addrs.length; i += 4000) {
-        const chunk = addrs.slice(i, i + 4000);
+      // 400 per Move call (16 KiB argument limit), 2 000 per transaction (new-object limit).
+      for (let i = 0; i < addrs.length; i += tx.ALLOWLIST_TX_BATCH) {
+        const chunk = addrs.slice(i, i + tx.ALLOWLIST_TX_BATCH);
         const r = await exec(e, tx.editAllowlist({ packageId: e.cfg.packageId }, { listId: o.list, capId: o.cap, [verb]: chunk }));
         console.log(`${verb === 'add' ? 'Added' : 'Removed'} ${chunk.length}: ${r.digest}`);
       }
@@ -312,6 +312,7 @@ program
     const trail = emptyTrail();
     let prev: WatchSample | null = null;
     let failures = 0;
+    let needReconcile = false;
     for (;;) {
       // A watcher must outlive one bad RPC answer: it reports repeated failures instead.
       try {
@@ -320,8 +321,13 @@ program
       const firstRead = cursor === null;
       cursor = page.cursor ?? cursor;
       applyEvents(trail, page.events);
-      // Old events pruned by the node: take the yetis from the game's own table.
-      if (firstRead && !page.fromStart) await reconcileTrail(e.client, game, trail);
+      // Old events pruned by the node: take the yetis from the game's own table
+      // (retried on the next round if it fails).
+      if (firstRead && !page.fromStart) needReconcile = true;
+      if (needReconcile) {
+        await reconcileTrail(e.client, game, trail);
+        needReconcile = false;
+      }
       for (const ev of page.events) console.log(`  event ${ev.name} ${summarize(ev.data)}`);
       const explorers = await getExplorers(e.client, [...trail.explorers.keys()]);
       const now = Date.now();

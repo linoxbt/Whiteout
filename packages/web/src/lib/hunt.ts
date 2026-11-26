@@ -24,6 +24,7 @@ import {
   decryptTiles,
   emptyTrail,
   findExplorerId,
+  prizeTypesOf,
   reconcileTrail,
   getExplorer,
   getGame,
@@ -134,6 +135,7 @@ export class Hunt {
   start() {
     if (this.#running) return;
     this.#running = true;
+    this.#generation++;
     void this.refresh();
     this.#poll();
     // A reveal queued before the player left the page still has to reach the chain.
@@ -141,20 +143,25 @@ export class Hunt {
   }
   stop() {
     this.#running = false;
+    this.#generation++;
     if (this.#timer) clearTimeout(this.#timer);
-    if (this.#holdTimer) clearTimeout(this.#holdTimer);
     this.#timer = null;
-    this.#holdTimer = null;
+    // The hold timer stays: a revealed tile queued to ride with the next step must reach
+    // the chain before its deadline even while the player looks at another page.
   }
+
+  #generation = 0;
 
   /** Polls every 4 s while the hunt is live and visible; slower when hidden or over. */
   #poll() {
     if (!this.#running) return;
+    const gen = this.#generation;
     const hidden = typeof document !== 'undefined' && document.hidden;
     const pending = !!this.view.me?.pending;
     const delay = hidden && !pending ? 20_000 : this.view.game && this.ended && !pending ? 15_000 : 4000;
     this.#timer = setTimeout(() => {
-      void this.refresh().finally(() => this.#poll());
+      // A stop() and start() in between began a new loop: this one ends here.
+      void this.refresh().finally(() => gen === this.#generation && this.#poll());
     }, delay);
   }
 
@@ -172,6 +179,7 @@ export class Hunt {
 
   // --- Reads ------------------------------------------------------------------
 
+  #needReconcile = false;
   /** The address whose Explorer was looked up in the game's table (once per address). */
   #lookedUp: string | null = null;
   #refreshing: Promise<void> | null = null;
@@ -213,14 +221,23 @@ export class Hunt {
       this.#clockOffset = clock - Date.now();
       const trail = applyEvents(this.view.trail, page.events);
       // The node may no longer hold this hunt's oldest events (it prunes after days):
-      // read the yetis and prizes from the game's own objects instead.
-      if (firstRead && !page.fromStart) await reconcileTrail(suiClient, game, trail);
+      // read the yetis and prizes from the game's own objects instead, retrying on
+      // later polls until it succeeds.
+      if (firstRead && !page.fromStart) this.#needReconcile = true;
+      if (this.#needReconcile) {
+        try {
+          await reconcileTrail(suiClient, game, trail);
+          this.#needReconcile = false;
+        } catch (e) {
+          console.warn('reconcile failed; retrying on the next poll', e);
+        }
+      }
       let me: ExplorerState | null = null;
       if (address) {
         let mineId = [...trail.explorers.entries()].find(([, e]) => sameId(e.owner, address))?.[0] ?? null;
         if (!mineId && this.#lookedUp !== address) {
-          this.#lookedUp = address;
           mineId = await findExplorerId(suiClient, game, address);
+          this.#lookedUp = address; // only once the lookup answered
         }
         if (mineId) me = await getExplorer(suiClient, mineId, config.packageId);
       }
@@ -462,6 +479,13 @@ export class Hunt {
     if (this.#holdTimer) clearTimeout(this.#holdTimer);
     this.#holdTimer = null;
     await this.#act(async () => {
+      // A claim needs the next rank's prize type; read it from the game if the events
+      // that named it were pruned.
+      const g0 = this.view.game;
+      const rank = (g0?.finders.length ?? 0) + 1;
+      if (tile.kind === TileKind.RELIC && g0 && !this.view.trail.prizeTypes.get(rank)) {
+        for (const [r, type] of await prizeTypesOf(suiClient, this.gameId)) this.view.trail.prizeTypes.set(r, type);
+      }
       const t = new Transaction();
       this.#resolveInto(t, tile, me);
       await run(t, this.wallet, this.address!);
@@ -548,7 +572,9 @@ export class Hunt {
       this.#maybeQueueResolve();
     } catch (e) {
       const msg = (e as Error).message ?? '';
-      if (msg === 'Reading session declined' || /reject|denied|declin|cancel/i.test(msg)) {
+      // Only the player's own refusal (our prompt or the wallet's) pauses reveals; a key
+      // server refusal is retried like any other failure.
+      if (msg === 'Reading session declined' || /user (rejected|denied|declined|cancell?ed)|rejected (the|by the) (request|user)|request (was )?(rejected|cancell?ed)/i.test(msg)) {
         // Do not nag: wait until the player taps "Allow reading" again.
         this.#set({
           revealing: null,

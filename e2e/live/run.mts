@@ -14,6 +14,8 @@ import {
   GRID,
   TileKind,
   applyEvents,
+  findExplorerId,
+  getExplorer,
   emptyTrail,
   listGameEvents,
   parseAbort,
@@ -429,14 +431,23 @@ async function leaveAndReturn(page: Page, gameId: string, who: string) {
     console.log(`\n${who}: this tile resolved at once; nothing queued to test leaving with`);
     return;
   }
-  await page.evaluate((id) => (location.hash = `#/hunt/${id}/verify`), gameId);
-  await page.waitForTimeout(4000);
+  // Stay on another page (the hunt page unmounts) until the chain shows the resolve.
+  await page.evaluate(() => (location.hash = '#/history'));
+  const g = await getGame(client, gameId);
+  const me = keyOf(load(), who).toSuiAddress();
+  const explorerId = await findExplorerId(client, g, me);
+  let landed = false;
+  for (let i = 0; i < 75 && explorerId; i++) {
+    const x = await getExplorer(client, explorerId);
+    if (!x.pending) {
+      landed = true;
+      break;
+    }
+    await page.waitForTimeout(2000);
+  }
+  check(`${who}: a queued reveal reaches the chain while the player is on another page`, landed);
   await page.evaluate((id) => (location.hash = `#/hunt/${id}`), gameId);
   await page.locator('.here').waitFor({ timeout: 60_000 });
-  const sent = await page
-    .waitForFunction(() => !/Saved on-chain with your next step/.test(document.body.innerText), null, { timeout: 150_000, polling: 1000 })
-    .then(() => true, () => false);
-  check(`${who}: a queued reveal reaches the chain after leaving the page and coming back`, sent);
 }
 
 async function joinAndConsent(page: Page, column: number) {

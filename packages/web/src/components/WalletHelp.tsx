@@ -9,6 +9,7 @@ import { getWallets } from '@mysten/wallet-standard';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { config } from '../config';
+import { adaptedWallets } from '../lib/compatWallets';
 
 const isMobile = () =>
   typeof navigator !== 'undefined' && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.matchMedia?.('(pointer: coarse)').matches);
@@ -35,6 +36,8 @@ const INSTALL = [
 
 interface Seen {
   ready: string[];
+  /** Mainnet-only wallets that sign here through the adapter. */
+  adapted: string[];
   otherNetwork: string[];
 }
 
@@ -43,9 +46,12 @@ function scan(): Seen {
   const sui = getWallets()
     .get()
     .filter((w) => w.chains.some((c) => c.startsWith('sui:')));
+  const ready = sui.filter((w) => w.chains.includes(chain as `${string}:${string}`)).map((w) => w.name);
+  const adapted = [...new Set(ready.filter((n) => adaptedWallets.has(n)))];
   return {
-    ready: sui.filter((w) => w.chains.includes(chain as `${string}:${string}`)).map((w) => w.name),
-    otherNetwork: sui.filter((w) => !w.chains.includes(chain as `${string}:${string}`)).map((w) => w.name),
+    ready: [...new Set(ready.filter((n) => !adaptedWallets.has(n)))],
+    adapted,
+    otherNetwork: [...new Set(sui.filter((w) => !w.chains.includes(chain as `${string}:${string}`) && !adaptedWallets.has(w.name)).map((w) => w.name))],
   };
 }
 
@@ -131,13 +137,20 @@ function WalletHelpDialog({ onClose }: { onClose: () => void }) {
               {seen.ready.map((n) => (
                 <li key={n}><i className="ok" /> {n}: ready</li>
               ))}
+              {seen.adapted.map((n) => (
+                <li key={n}>
+                  <i className="ok" /> {n}: ready. It only offers Sui Mainnet, so Whiteout builds each move for {config.network},
+                  your wallet signs it, and Whiteout sends it. If the wallet warns the transaction would fail on Mainnet, that is
+                  expected: it runs on {config.network}.
+                </li>
+              ))}
               {seen.otherNetwork.map((n) => (
                 <li key={n}>
                   <i className="warn" /> {n}: installed, but it does not offer Sui {config.network}. Switch it to {config.network} in its
                   settings, or use another wallet.
                 </li>
               ))}
-              {!seen.ready.length && !seen.otherNetwork.length && <li><i /> No Sui wallet extension found in this browser.</li>}
+              {!seen.ready.length && !seen.adapted.length && !seen.otherNetwork.length && <li><i /> No Sui wallet extension found in this browser.</li>}
             </ul>
             <p className="small">Installed a wallet just now? Reload the page so the browser registers it. Or get one:</p>
             <div className="wallet-links">
